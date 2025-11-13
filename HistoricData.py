@@ -1,49 +1,45 @@
 import requests
+import re
 #https://sky.coflnet.com/api/items/bazaar/tags
+def fetch_historic_data(item_id):
+    url = "https://sky.coflnet.com/api/bazaar/{item_id}/history"
+    response = requests.get(url)
+    html_content = response.text
+    buy_data= re.findall(r'"buy":([^,]*),', html_content)
+    sell_data = re.findall(r'"sell":([^,]*),', html_content)
+    time_data =re.findall(r'"timestamp":"([^"]*)"', html_content)
+    buyVolume_data = re.findall(r'"buyVolume":([^,]*),', html_content)
+    sellVolume_data = re.findall(r'"sellVolume":([^,]*),', html_content)
+    buyMovingWeek_data = re.findall(r'"buyMovingWeek":([^,]*),', html_content)
+    sellMovingWeek_data = re.findall(r'"sellMovingWeek":([^},]*)},', html_content)
+    maxBuy_data = re.findall(r'"maxBuy":([^,]*),', html_content)
+    maxSell_data = re.findall(r'"maxSell":([^,]*),', html_content)
+    minBuy_data = re.findall(r'"minBuy":([^,]*),', html_content)
+    minSell_data = re.findall(r'"minSell":([^,]*),', html_content)
+    years_data = []
+    months_data = []
+    days_data = []
+    for time in time_data:
+        year = time[0:4]
+        month = time[5:7]
+        day = time[8:10]
+        years_data .append(year)
+        months_data.append(month)
+        days_data.append(day)
 
-url = "https://sky.coflnet.com/api/bazaar/BOOSTER_COOKIE/history"
-response = requests.get(url)
-html_content = response.text
-times = html_content.split('},{')
-buy_prices = []
-sell_prices = []
-time_stamps = []
-for time in times:
-    index_1 = time.find("\"buy\":")
-    index_2 = time.find(",\"sell\":")
-    buy_price = time[index_1+6:index_2]
-    sell_price = time[index_2+8:time.find(",\"sellVolume\"")]
-    time_stamp_index = time.find("\"timestamp\":")
-    time_stamp = time[time_stamp_index+13:time.find(",\"buyMovingWeek\":")-1]
-    time_stamps.append(time_stamp)
-    buy_prices.append(buy_price)
-    sell_prices.append(sell_price)
-time_stamps[-1] = time_stamps[-1].replace("\"", "")
-sell_prices.pop(-1)
-buy_prices.pop(-1)
-buy_prices_float = [float(price) for price in buy_prices]
-sell_prices_float = [float(price) for price in sell_prices]
-years = []
-months = []
-days = []
-for time in time_stamps:
-    year = time[0:4]
-    month = time[5:7]
-    day = time[8:10]
-    years.append(year)
-    months.append(month)
-    days.append(day)
-
-years_int = [int(year) for year in years]
-months_int = [int(month) for month in months]
-days_int = [int(day) for day in days]
-
-
-def create_data_for_ML():
-    data = []
-    for i in range(len(buy_prices_float)):
-        data.append([years_int[i], months_int[i], days_int[i], buy_prices_float[i], sell_prices_float[i]])
-    return data
+    years_int = [int(year) for year in years_data]
+    months_int = [int(month) for month in months_data]
+    days_int = [int(day) for day in days_data]
+    buy_data_float = [float(price) for price in buy_data]
+    sell_data_float = [float(price) for price in sell_data]
+    buyVolume_data_float = [float(volume) for volume in buyVolume_data]
+    sellVolume_data_float = [float(volume) for volume in sellVolume_data]
+    buyMovingWeek_data_int = [int(moving) for moving in buyMovingWeek_data]
+    sellMovingWeek_data_int = [int(moving) for moving in sellMovingWeek_data]
+    maxBuy_data_float = [float(maxb) for maxb in maxBuy_data]
+    maxSell_data_float = [float(maxs) for maxs in maxSell_data]
+    minBuy_data_float = [float(minb) for minb in minBuy_data]
+    minSell_data_float = [float(mins) for mins in minSell_data]
 
 
 
