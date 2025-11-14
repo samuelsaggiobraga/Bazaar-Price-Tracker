@@ -1,9 +1,11 @@
 import requests
 import json
 import time
+import re
 from datetime import datetime, timedelta
 
-def fetch_all_data(item="BOOSTER_COOKIE",
+
+def fetch_all_data(item,
                    start=datetime(2020, 9, 10, 0, 0, 0),
                    end=datetime.now(),
                    interval_seconds=82800):
@@ -48,11 +50,15 @@ def fetch_all_data(item="BOOSTER_COOKIE",
     return raw_combined
 
 
+temp = requests.get("https://sky.coflnet.com/api/items/bazaar/tags")
+itemIDs = re.findall(r'"([^"]*)"', temp.text)
 
-all_data = fetch_all_data()
+
+for itemID in itemIDs:
+    all_data = fetch_all_data(itemID)
 
 
-with open("bazaar_history_combined.json", "w") as f:
-    json.dump(all_data, f, indent=4)
+    with open(f"bazaar_history_combined_{itemID}.json", "w") as f:
+        json.dump(all_data, f, indent=4)
 
-print("Saved", len(all_data), "entries.")
+    print("Saved", len(all_data), "entries.")
