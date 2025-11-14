@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 def fetch_all_data(item="BOOSTER_COOKIE",
                    start=datetime(2021, 9, 10, 0, 0, 0),
                    end=datetime.now(),
-                   interval_seconds=3600):
+                   interval_seconds=82800):
 
     base_url = "https://sky.coflnet.com/api/bazaar"
     interval = timedelta(seconds=interval_seconds)
