@@ -2,7 +2,7 @@ import requests
 import re
 #https://sky.coflnet.com/api/items/bazaar/tags
 def fetch_historic_data(item_id):
-    url = "https://sky.coflnet.com/api/bazaar/{item_id}/history"
+    url = f"https://sky.coflnet.com/api/bazaar/{item_id}/history"
     response = requests.get(url)
     html_content = response.text
     buy_data= re.findall(r'"buy":([^,]*),', html_content)
