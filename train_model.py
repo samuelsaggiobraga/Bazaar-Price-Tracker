@@ -149,41 +149,36 @@ def load_and_prepare_data(item_id, mayor_data, delete_after=True):
     return np.array(features), np.array(targets), timestamps
 
 
-def train_model_on_items(item_ids, delete_files=True):
-    """Train a model on multiple items."""
-    print("Fetching mayor perks data...")
-    mayor_data = get_mayor_perks()
-    print(f"Loaded {len(mayor_data)} mayor periods")
+def train_single_item_model(item_id, mayor_data, delete_file=False):
+    """Train a model on a single item.
     
-    all_features = []
-    all_targets = []
-    
-    for item_id in item_ids:
-        print(f"\nProcessing {item_id}...")
-        features, targets, _ = load_and_prepare_data(item_id, mayor_data, delete_after=delete_files)
+    Args:
+        item_id: The bazaar item ID to train on
+        mayor_data: Mayor perks data
+        delete_file: If True, delete the JSON file after training
         
-        if features is not None and len(features) > 0:
-            all_features.append(features)
-            all_targets.append(targets)
-            print(f"  Loaded {len(features)} data points")
+    Returns:
+        tuple: (model, scaler, metadata_dict) or (None, None, None) if failed
+    """
+    print(f"\nTraining model for {item_id}...")
+    result = load_and_prepare_data(item_id, mayor_data, delete_after=delete_file)
     
-    if len(all_features) == 0:
-        print("No data to train on!")
-        return None, None
+    if result[0] is None or len(result) != 3:
+        return None, None, None
     
-    # Combine all data
-    X = np.vstack(all_features)
-    y = np.hstack(all_targets)
+    features, targets, timestamps = result
     
-    print(f"\nTotal training samples: {len(X)}")
-    print(f"Feature dimensions: {X.shape[1]}")
+    if len(features) == 0:
+        print(f"  No data for {item_id}")
+        return None, None, None
+    
+    print(f"  Loaded {len(features)} data points")
     
     # Scale features
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X_scaled = scaler.fit_transform(features)
     
     # Train model
-    print("\nTraining Random Forest model...")
     model = RandomForestRegressor(
         n_estimators=100,
         max_depth=20,
@@ -192,26 +187,163 @@ def train_model_on_items(item_ids, delete_files=True):
         random_state=42,
         n_jobs=-1
     )
-    model.fit(X_scaled, y)
+    model.fit(X_scaled, targets)
     
-    print("Training complete!")
+    # Metadata for tracking
+    metadata = {
+        'item_id': item_id,
+        'total_samples': len(features),
+        'trained_at': datetime.now().isoformat(),
+        'feature_count': features.shape[1]
+    }
     
-    return model, scaler
+    print(f"  Training complete for {item_id}")
+    
+    return model, scaler, metadata
 
 
-def save_model(model, scaler, model_name="bazaar_price_model"):
+def train_model_on_items(item_ids, delete_files=True, per_item=True):
+    """Train models on multiple items.
+    
+    Args:
+        item_ids: List of item IDs to train on
+        delete_files: If True, delete JSON files after training
+        per_item: If True, create separate model per item. If False, combine all items.
+        
+    Returns:
+        If per_item=True: dict mapping item_id to (model, scaler, metadata)
+        If per_item=False: (model, scaler) for combined model
+    """
+    print("Fetching mayor perks data...")
+    mayor_data = get_mayor_perks()
+    print(f"Loaded {len(mayor_data)} mayor periods")
+    
+    if per_item:
+        # Train separate model for each item
+        models_dict = {}
+        
+        for item_id in item_ids:
+            model, scaler, metadata = train_single_item_model(item_id, mayor_data, delete_file=delete_files)
+            if model is not None:
+                models_dict[item_id] = (model, scaler, metadata)
+        
+        print(f"\nTrained {len(models_dict)} models successfully")
+        return models_dict
+    
+    else:
+        # Original behavior: combine all items into one model
+        all_features = []
+        all_targets = []
+        
+        for item_id in item_ids:
+            print(f"\nProcessing {item_id}...")
+            features, targets, _ = load_and_prepare_data(item_id, mayor_data, delete_after=delete_files)
+            
+            if features is not None and len(features) > 0:
+                all_features.append(features)
+                all_targets.append(targets)
+                print(f"  Loaded {len(features)} data points")
+        
+        if len(all_features) == 0:
+            print("No data to train on!")
+            return None, None
+        
+        # Combine all data
+        X = np.vstack(all_features)
+        y = np.hstack(all_targets)
+        
+        print(f"\nTotal training samples: {len(X)}")
+        print(f"Feature dimensions: {X.shape[1]}")
+        
+        # Scale features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        # Train model
+        print("\nTraining Random Forest model...")
+        model = RandomForestRegressor(
+            n_estimators=100,
+            max_depth=20,
+            min_samples_split=5,
+            min_samples_leaf=2,
+            random_state=42,
+            n_jobs=-1
+        )
+        model.fit(X_scaled, y)
+        
+        print("Training complete!")
+        
+        return model, scaler
+
+
+def save_model(model, scaler, model_name="bazaar_price_model", metadata=None):
     """Save trained model and scaler."""
     joblib.dump(model, f"{model_name}.pkl")
     joblib.dump(scaler, f"{model_name}_scaler.pkl")
+    if metadata is not None:
+        joblib.dump(metadata, f"{model_name}_metadata.pkl")
     print(f"Model saved as {model_name}.pkl")
     print(f"Scaler saved as {model_name}_scaler.pkl")
 
 
-def load_model(model_name="bazaar_price_model"):
-    """Load a trained model and scaler."""
+def save_models(models_dict, output_dir="."):
+    """Save multiple per-item models.
+    
+    Args:
+        models_dict: Dict mapping item_id to (model, scaler, metadata)
+        output_dir: Directory to save models in
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    for item_id, (model, scaler, metadata) in models_dict.items():
+        model_name = os.path.join(output_dir, item_id)
+        save_model(model, scaler, model_name, metadata)
+    
+    print(f"\nSaved {len(models_dict)} models to {output_dir}")
+
+
+def load_model(model_name="bazaar_price_model", load_metadata=False):
+    """Load a trained model and scaler.
+    
+    Args:
+        model_name: Base name of the model files (without .pkl extension)
+        load_metadata: If True, also load and return metadata
+        
+    Returns:
+        (model, scaler) if load_metadata=False
+        (model, scaler, metadata) if load_metadata=True
+    """
     model = joblib.load(f"{model_name}.pkl")
     scaler = joblib.load(f"{model_name}_scaler.pkl")
+    
+    if load_metadata:
+        metadata_path = f"{model_name}_metadata.pkl"
+        if os.path.exists(metadata_path):
+            metadata = joblib.load(metadata_path)
+            return model, scaler, metadata
+        else:
+            return model, scaler, None
+    
     return model, scaler
+
+
+def load_item_model(item_id, model_dir="models"):
+    """Load model for a specific item.
+    
+    Args:
+        item_id: The bazaar item ID
+        model_dir: Directory containing the models
+        
+    Returns:
+        (model, scaler, metadata) or (None, None, None) if not found
+    """
+    model_path = os.path.join(model_dir, item_id)
+    
+    if not os.path.exists(f"{model_path}.pkl"):
+        print(f"Model not found for {item_id}")
+        return None, None, None
+    
+    return load_model(model_path, load_metadata=True)
 
 
 if __name__ == "__main__":
@@ -222,8 +354,16 @@ if __name__ == "__main__":
     
     print(f"Found {len(item_ids)} items to train on")
     
-    # Train on all items (will delete files as processed)
-    model, scaler = train_model_on_items(item_ids, delete_files=True)
+    # Choose training mode
+    PER_ITEM = True  # Set to False for single combined model (old behavior)
     
-    if model is not None:
-        save_model(model, scaler)
+    if PER_ITEM:
+        # Train separate model for each item (recommended for day trading)
+        models_dict = train_model_on_items(item_ids, delete_files=False, per_item=True)
+        if models_dict:
+            save_models(models_dict, output_dir="models")
+    else:
+        # Train single model on all items combined (original behavior)
+        model, scaler = train_model_on_items(item_ids, delete_files=True, per_item=False)
+        if model is not None:
+            save_model(model, scaler)

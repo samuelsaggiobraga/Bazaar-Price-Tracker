@@ -8,8 +8,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import joblib
 from data_utils import load_or_fetch_item_data
 from mayor_utils import get_mayor_perks, match_mayor_perks
-from visualization_server import visualize_predictions
-from outlier_utils import remove_outliers, detect_outliers_for_viz
+from outlier_utils import remove_outliers
 from backtest import run_backtest, print_backtest_report
 
 
@@ -209,46 +208,8 @@ def train_and_test_single_item(item_id, cleanup=False):
     all_dates = [datetime.strptime(ts[:10], '%Y-%m-%d') for ts in timestamps]
     test_dates_dt = [datetime.strptime(ts[:10], '%Y-%m-%d') for ts in timestamps_test]
     
-    # Detect outliers for visualization (on all historical data)
-    all_timestamps_str = [d.strftime('%Y-%m-%d') for d in all_dates]
-    outliers_viz = detect_outliers_for_viz(y, all_timestamps_str, method='tukey', multiplier=1.5)
-    
     current_price = y_test[-1] if len(y_test) > 0 else y_train[-1]
     avg_future = np.mean(future_predictions)
-    trend_pct = ((avg_future - current_price) / current_price) * 100
-    
-    metrics_dict = {
-        'mae': mae,
-        'rmse': rmse,
-        'r2': r2,
-        'mape': mape
-    }
-    
-    forecast_summary_dict = {
-        'current_price': current_price,
-        'avg_forecast': avg_future,
-        'trend': trend_pct,
-        'min_pred': np.min(future_predictions),
-        'max_pred': np.max(future_predictions)
-    }
-    
-    # Launch interactive visualization
-    visualize_predictions(
-        item_id=item_id,
-        historical_dates=all_dates,
-        historical_prices=y,
-        test_dates=test_dates_dt,
-        test_actual=y_test,
-        test_predicted=y_pred,
-        future_dates=future_dates,
-        future_predictions=future_predictions,
-        split_date=split_date,
-        today=today,
-        start_date=start_date,
-        metrics=metrics_dict,
-        forecast_summary=forecast_summary_dict,
-        outliers=outliers_viz
-    )
     
     # Print forecast roadmap to console
     print(f"\n{'='*60}")
