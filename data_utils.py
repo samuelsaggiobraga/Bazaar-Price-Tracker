@@ -71,7 +71,8 @@ def load_or_fetch_item_data(item_id, fetch_if_missing=True):
     """
     import os
     
-    filename = f"bazaar_history_combined_{item_id}.json"
+    json_dir = "/Users/samuelbraga/Json Files"
+    filename = os.path.join(json_dir, f"bazaar_history_combined_{item_id}.json")
     
     if not os.path.exists(filename):
         if fetch_if_missing:

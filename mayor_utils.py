@@ -46,6 +46,20 @@ def get_mayor_perks():
     return mayor_data
 
 
+def get_mayor_start_date(mayor_data):
+    """Get the earliest date when mayor data becomes available.
+    
+    Args:
+        mayor_data: List of mayor data from get_mayor_perks()
+        
+    Returns:
+        datetime object of the earliest mayor start date, or None if no data
+    """
+    if not mayor_data:
+        return None
+    return min(mayor['start_date'] for mayor in mayor_data)
+
+
 def match_mayor_perks(timestamp_str, mayor_data):
     """Match a timestamp to the appropriate mayor perks.
     
