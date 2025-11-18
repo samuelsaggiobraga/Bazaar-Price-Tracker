@@ -116,10 +116,11 @@ def label_direction(df, horizon_bars=1, threshold=0.002):
 def clean_infinite_values(X):
     """Replace infinite and too large values with finite numbers."""
     X = np.asarray(X, dtype=np.float64)
-    # Replace inf with the max/min finite float64 values
-    X = np.nan_to_num(X, nan=0.0, posinf=np.finfo(np.float64).max/1e10, neginf=np.finfo(np.float64).min/1e10)
-    # Cap extremely large values to prevent overflow
-    max_val = np.finfo(np.float64).max / 1e10
+    # Replace inf/nan with finite values
+    X = np.nan_to_num(X, nan=0.0, posinf=1e10, neginf=-1e10)
+    # Cap extremely large values to prevent overflow in sklearn
+    # Use a more conservative cap to avoid overflow in square operations
+    max_val = 1e10
     X = np.clip(X, -max_val, max_val)
     return X
 
@@ -611,15 +612,14 @@ def train_two_phase_model(item_ids, horizon_bars=1, threshold=0.002):
             train_data = lgb.Dataset(X_train_scaled, label=y_train)
             val_data = lgb.Dataset(X_val_scaled, label=y_val, reference=train_data)
             
-            # Continue from Phase 1 model if available
+            # Train fresh model (can't use init_model since features differ from Phase 1)
             fold_model = lgb.train(
                 params={'objective': 'binary', 'metric': 'auc', 'verbosity': -1,
                        'learning_rate': 0.05, 'num_leaves': 31, 'feature_fraction': 0.8},
                 train_set=train_data,
                 num_boost_round=200,
                 valid_sets=[val_data],
-                valid_names=['validation'],
-                init_model=phase1_model if phase1_model else None
+                valid_names=['validation']
             )
             
             y_pred_proba = fold_model.predict(X_val_scaled)
@@ -714,13 +714,32 @@ def predict_item(global_model, scaler, feature_columns, item_encoder, item_id, d
     Predicts the direction for a single item using the global model.
     Returns a user-friendly prediction dictionary with the latest forecast.
     """
+    # Get the actual most recent price directly from raw JSON data
+    most_recent_entry = None
+    most_recent_ts = None
+    
+    for entry in reversed(data_raw):
+        if isinstance(entry, dict) and 'timestamp' in entry and 'buy' in entry:
+            try:
+                ts = parse_timestamp(entry['timestamp'])
+                if most_recent_ts is None or ts > most_recent_ts:
+                    most_recent_ts = ts
+                    most_recent_entry = entry
+            except:
+                continue
+    
+    if most_recent_entry is None:
+        raise ValueError("No valid data in raw input.")
+    
+    most_recent_price = float(most_recent_entry.get('buy', 0))
+    most_recent_timestamp = most_recent_ts
+    
     # Prepare dataframe
     df = prepare_dataframe_from_raw(data_raw, mayor_data)
     if df.empty:
         raise ValueError("No valid data to predict on.")
     
-    # Keep original df for metadata before dropping NaN
-    df_original = df.copy()
+    # Now process for prediction
     df = label_direction(df)
     df.dropna(inplace=True)
     
@@ -749,7 +768,8 @@ def predict_item(global_model, scaler, feature_columns, item_encoder, item_id, d
     latest_idx = -1
     latest_prob = float(probs[latest_idx])
     latest_pred = int(preds[latest_idx])
-    current_price = float(df.iloc[latest_idx]['buy_price'])
+    # Use the actual most recent price from raw data
+    current_price = most_recent_price
     
     # Calculate expected price change based on probability
     # If prob > 0.5, we expect price increase
@@ -786,7 +806,7 @@ if __name__ == '__main__':
     # fetch all item IDs
     url = "https://sky.coflnet.com/api/items/bazaar/tags"
     item_ids = requests.get(url).json()
-    
+    """
     # Determine training mode based on command line argument
     mode = sys.argv[1] if len(sys.argv) > 1 else 'no_mayor'
     
@@ -841,4 +861,24 @@ if __name__ == '__main__':
     print(f"Confidence: {prediction['confidence']:.1f}%")
     print(f"Recommendation: {prediction['recommendation']}")
     print("="*60)
+    """
+
+    model, scaler, feature_columns, item_encoder = train_two_phase_model(item_ids[:3])
+    
+    test_item = item_ids[0]
+    data = load_or_fetch_item_data(test_item)
+    mayor_data = get_mayor_perks() 
+    prediction = predict_item(model, scaler, feature_columns, item_encoder, test_item, data, mayor_data)
+    
+    print("\n" + "="*60)
+    print(f"Prediction for {test_item}")
+    print("="*60)
+    print(f"Current Price: ${prediction['current_price']:,.2f}")
+    print(f"Predicted Price: ${prediction['predicted_price']:,.2f}")
+    print(f"Expected Change: {prediction['predicted_change_pct']:.2f}%")
+    print(f"Direction: {prediction['direction']}")
+    print(f"Confidence: {prediction['confidence']:.1f}%")
+    print(f"Recommendation: {prediction['recommendation']}")
+    print("="*60)
+    
 

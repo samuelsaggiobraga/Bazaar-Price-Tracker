@@ -95,3 +95,36 @@ def load_or_fetch_item_data(item_id, fetch_if_missing=True):
         data = json.load(f)
     
     return data
+
+
+def fetch_recent_data(item_id, hours=24):
+    """Fetch only recent data from the API for real-time predictions.
+    
+    Args:
+        item_id: The item ID to fetch
+        hours: Number of hours of recent data to fetch (default 24)
+        
+    Returns:
+        List of recent data entries from the API
+    """
+    end = datetime.now()
+    start = end - timedelta(hours=hours)
+    
+    start_str = start.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
+    end_str = end.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
+    
+    url = f"https://sky.coflnet.com/api/bazaar/{item_id}/history?start={start_str}&end={end_str}"
+    
+    try:
+        resp = requests.get(url)
+        data = resp.json()
+        
+        if isinstance(data, list):
+            return data
+        elif isinstance(data, dict):
+            return [data]
+        else:
+            return []
+    except Exception as e:
+        print(f"Error fetching recent data: {e}")
+        return []

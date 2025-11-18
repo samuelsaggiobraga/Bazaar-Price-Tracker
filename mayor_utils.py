@@ -1,5 +1,6 @@
 import requests
 import re
+import os
 from datetime import datetime
 
 
@@ -30,7 +31,8 @@ def get_mayor_perks():
         binary_perks = [0 for _ in range(40)]
         matches = re.findall(r'"name":"([^"]*)"', mayor)
         
-        with open("perk_names.txt", "r") as f:
+        perk_file = os.path.join(os.path.dirname(__file__), "perk_names.txt")
+        with open(perk_file, "r") as f:
             perk_names = f.read().splitlines()
         
         for perk_name in matches:
