@@ -96,9 +96,9 @@ def get_available_items():
     try:
         if os.path.exists(json_dir):
             for filename in os.listdir(json_dir):
-                if filename.startswith("bazaar_history_combined_") and filename.endswith(".json"):
+                if filename.startswith("bazaar_history_combined_") and filename.endswith(".pkl.gz"):
                     # Extract item ID from filename
-                    item_id = filename.replace("bazaar_history_combined_", "").replace(".json", "")
+                    item_id = filename.replace("bazaar_history_combined_", "").replace(".pkl.gz", "")
                     available_items.append(item_id)
             print(f"📁 Found {len(available_items)} items with downloaded data")
         else:
