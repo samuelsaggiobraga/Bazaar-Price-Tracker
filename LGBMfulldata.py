@@ -1,30 +1,20 @@
-import os
+import optuna
+from optuna.integration import LightGBMPruningCallback
 import json
-from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import joblib
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import StandardScaler
 import lightgbm as lgb
-from data_utils import load_or_fetch_item_data
+from data_utils import load_or_fetch_item_data, parse_timestamp
 from mayor_utils import get_mayor_perks, match_mayor_perks
 import requests
-import gc
+import sys
+from tqdm import tqdm
 import warnings
+import gc
 warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
 # ------------------- Helpers -------------------
-
-def parse_timestamp(ts_str):
-    fmts = ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d")
-    for fmt in fmts:
-        try:
-            return datetime.strptime(ts_str, fmt)
-        except Exception:
-            continue
-    try:
-        return datetime.fromisoformat(ts_str)
-    except Exception:
-        raise ValueError(f"Unrecognized timestamp format: {ts_str}")
 
 def add_time_features(df, ts_col='timestamp'):
     dt = pd.to_datetime(df[ts_col])
@@ -233,62 +223,6 @@ def clean_infinite_values(X):
     return X
 
 
-def focal_loss_objective(y_true, y_pred, alpha=0.25, gamma=2.0):
-    """Focal loss for LightGBM.
-    
-    Args:
-        y_true: Ground truth labels
-        y_pred: Raw predictions (logits)
-        alpha: Weighting factor for positive class (0.25 = more weight on negatives)
-        gamma: Focusing parameter (2.0 = strongly down-weight easy examples)
-    
-    Returns:
-        grad: Gradient
-        hess: Hessian
-    """
-    # Convert logits to probabilities
-    p = 1.0 / (1.0 + np.exp(-y_pred))
-    
-    # Calculate focal loss components
-    # For y=1: loss = -alpha * (1-p)^gamma * log(p)
-    # For y=0: loss = -(1-alpha) * p^gamma * log(1-p)
-    
-    # Gradient calculation
-    grad = np.where(
-        y_true == 1,
-        alpha * (p - 1) * (gamma * (1 - p) ** (gamma - 1) * np.log(np.maximum(p, 1e-15)) + (1 - p) ** gamma / np.maximum(p, 1e-15)),
-        -(1 - alpha) * p * (gamma * p ** (gamma - 1) * np.log(np.maximum(1 - p, 1e-15)) + p ** gamma / np.maximum(1 - p, 1e-15))
-    )
-    
-    # Hessian (approximate second derivative)
-    hess = np.where(
-        y_true == 1,
-        alpha * p * (1 - p) * gamma * (1 - p) ** (gamma - 1),
-        (1 - alpha) * p * (1 - p) * gamma * p ** (gamma - 1)
-    )
-    
-    return grad, hess
-
-
-def focal_loss_eval(y_pred, data, alpha=0.25, gamma=2.0):
-    """Focal loss evaluation metric for LightGBM.
-    
-    Args:
-        y_pred: Predicted values (probabilities)
-        data: LightGBM Dataset containing the labels
-    """
-    y_true = data.get_label()
-    p = 1.0 / (1.0 + np.exp(-y_pred))
-    
-    loss = np.where(
-        y_true == 1,
-        -alpha * (1 - p) ** gamma * np.log(np.maximum(p, 1e-15)),
-        -(1 - alpha) * p ** gamma * np.log(np.maximum(1 - p, 1e-15))
-    )
-    
-    return 'focal_loss', np.mean(loss), False
-
-
 def optimize_threshold(y_true, y_pred_proba):
     """Find optimal decision threshold to maximize F1 score.
     
@@ -321,8 +255,115 @@ def optimize_threshold(y_true, y_pred_proba):
     
     return best_threshold, best_f1
 
+def objective(trial, item_data, model_type='buy'):
 
-def train_three_model_system(item_ids, horizon_bars=1, threshold=0.005, update_mode=False):
+    # Suggest hyperparameters ONCE per trial (not per item!)
+    param_template = {
+        'objective': 'binary',
+        'metric': 'auc',
+        'verbosity': -1,
+        'boosting_type': 'gbdt',
+        # Slightly narrower, speed‑oriented search space
+        'learning_rate': trial.suggest_float('learning_rate', 0.05, 0.25, log=True),
+        'num_leaves': trial.suggest_int('num_leaves', 15, 63),  # smaller trees = faster
+        'max_depth': trial.suggest_int('max_depth', 3, 6),      # shallower trees
+        'feature_fraction': trial.suggest_float('feature_fraction', 0.6, 0.9),
+        'bagging_fraction': trial.suggest_float('bagging_fraction', 0.6, 0.9),
+        'bagging_freq': trial.suggest_int('bagging_freq', 1, 3),
+        'min_child_samples': trial.suggest_int('min_child_samples', 20, 100),
+        'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 20, 100),
+        'lambda_l1': trial.suggest_float('lambda_l1', 0.0, 0.5),
+        'lambda_l2': trial.suggest_float('lambda_l2', 0.0, 2.0),
+        'seed': 42,
+        'force_col_wise': True,
+        'num_threads': -1  # use all available cores
+    }
+
+
+    all_f1 = []
+    processed_items = 0
+
+    # Progress bar over preloaded datasets
+    pbar = tqdm(
+        range(len(item_data)),
+        desc=f"Trial {trial.number:3d}",
+        leave=False
+    )
+
+    for idx in pbar:
+        X_train, y_train, X_val, y_val, features = item_data[idx]
+
+        # SKIP SCALING - LightGBM doesn't need it and it's slow
+        X_train_scaled = X_train
+        X_val_scaled = X_val
+
+        # Calculate class weights and add to params
+        pos_count = (y_train == 1).sum()
+        neg_count = (y_train == 0).sum()
+        scale_pos_weight = neg_count / (pos_count + 1e-9)
+
+        # Use the params suggested at the start of the trial
+        param = param_template.copy()
+        param['scale_pos_weight'] = scale_pos_weight
+
+        # Create LightGBM datasets
+        train_data = lgb.Dataset(X_train_scaled, label=y_train, free_raw_data=True)
+        val_data = lgb.Dataset(X_val_scaled, label=y_val, reference=train_data, free_raw_data=True)
+
+        # Train with aggressive pruning
+        pruning_callback = LightGBMPruningCallback(trial, 'auc')
+
+        try:
+            model = lgb.train(
+                param,
+                train_data,
+                valid_sets=[val_data],
+                num_boost_round=500,  # fewer rounds for speed; early stopping will cut further
+                callbacks=[
+                    lgb.early_stopping(stopping_rounds=50),  # ultra‑aggressive early stopping
+                    pruning_callback,                       # prune bad trials ASAP
+                    lgb.log_evaluation(period=0)
+                ]
+            )
+
+            # Predict and evaluate
+            y_pred_proba = model.predict(X_val_scaled)
+            _, best_f1 = optimize_threshold(y_val, y_pred_proba)
+            all_f1.append(best_f1)
+            processed_items += 1
+
+        except optuna.TrialPruned:
+            # Clean up and re-raise to prune this trial
+            del X_train_scaled, X_val_scaled, y_train, y_val, train_data, val_data
+            gc.collect()
+            raise
+        except Exception:
+            # Clean up on any other error and skip this item
+            del X_train_scaled, X_val_scaled, y_train, y_val, train_data, val_data
+            gc.collect()
+            continue
+
+        # Update progress bar with current F1
+        current_f1 = np.mean(all_f1) if all_f1 else 0.0
+        pbar.set_postfix({
+            'F1': f'{current_f1:.4f}',
+            'processed': processed_items,
+        })
+
+        # Aggressive memory cleanup after EACH item
+        del X_train_scaled, X_val_scaled, y_train, y_val, train_data, val_data, model, y_pred_proba
+        # Skip gc.collect() in hot loop - only call periodically
+        if processed_items % 50 == 0:
+            gc.collect()
+
+    pbar.close()
+
+    if not all_f1:
+        return 0.0
+
+    return np.mean(all_f1)
+
+def train_three_model_system(item_id, horizon_bars=1, threshold=0.005, update_mode=False):
     """
     Train THREE separate models (buy, sell, spread) with two-phase temporal training.
     Processes one item at a time to minimize RAM usage.
@@ -340,7 +381,6 @@ def train_three_model_system(item_ids, horizon_bars=1, threshold=0.005, update_m
         update_mode: If True, fetch only new data since last update (for retraining)
         
     Returns:
-        Tuple of (models_dict, scaler, feature_columns, item_encoder) where models_dict contains
         'buy', 'sell', and 'spread' models
     """
     print("\n" + "="*70)
@@ -352,8 +392,6 @@ def train_three_model_system(item_ids, horizon_bars=1, threshold=0.005, update_m
     # Get mayor data to determine split point
     mayor_data = get_mayor_perks()
     
-    item_encoder = LabelEncoder()
-    item_encoder.fit(item_ids)
     
     # Initialize THREE models (buy, sell, spread)
     models = {
@@ -382,161 +420,142 @@ def train_three_model_system(item_ids, horizon_bars=1, threshold=0.005, update_m
     print("Processing Data (sequential)")
     print("="*70 + "\n")
     
-    for idx, item_id in enumerate(item_ids):
-        print(f"\n[{idx+1}/{len(item_ids)}] Processing {item_id}...")
         
-        data = load_or_fetch_item_data(item_id, update_with_new_data=update_mode)
-
-        df_base = prepare_dataframe_from_raw(data, mayor_data, has_mayor_system=True)
-        
-        if not df_base.empty and len(df_base) >= 20:
-            # Train all 3 models on same data
-            for model_type in ['buy', 'sell', 'spread']:
-                df = df_base.copy()
+    data = load_or_fetch_item_data(item_id, update_with_new_data=update_mode)
+    df_base = prepare_dataframe_from_raw(data, mayor_data, has_mayor_system=True)
+    if not df_base.empty and len(df_base) >= 20:
+        # Train all 3 models on same data
+        for model_type in ['buy', 'sell', 'spread']:
+            df = df_base.copy()
+            
+            # Label based on model type
+            if model_type == 'spread':
+                df = label_spread_direction(df, horizon_bars, threshold)
+                target_col = 'target_spread'
+            else:
+                df = label_direction(df, horizon_bars, threshold, price_type=model_type)
+                target_col = f'target_{model_type}'
+            
+            df.dropna(inplace=True)
+            
+            if len(df) >= 20:
                 
-                # Label based on model type
-                if model_type == 'spread':
-                    df = label_spread_direction(df, horizon_bars, threshold)
-                    target_col = 'target_spread'
+                # Determine feature columns (exclude all future_ and target columns)
+                exclude_cols = set([c for c in df.columns if c.startswith('future_') or c.startswith('target_')]) | {'timestamp'}
+                curr_features = [c for c in df.columns if c not in exclude_cols]
+                
+                if feature_columns is None:
+                    feature_columns = curr_features
                 else:
-                    df = label_direction(df, horizon_bars, threshold, price_type=model_type)
-                    target_col = f'target_{model_type}'
+                    curr_features = feature_columns
                 
-                df.dropna(inplace=True)
+                X2 = df[curr_features].values
+                y2 = df[target_col].values
+                X2 = clean_infinite_values(X2)
                 
-                if len(df) >= 20:
-                    df['item_id_int'] = item_encoder.transform([item_id]*len(df))
+                # EXPANDING WINDOW VALIDATION (respects temporal order)
+                # Use multiple train/val splits to get robust metrics
+                n_windows = 3  # Number of validation windows
+                min_train_size = int(len(X2) * 0.6)  # Start with 60% for first window
+                
+                window_metrics = []
+                window_thresholds = []
+                
+                for window_idx in range(n_windows):
+                    # Calculate split points for this window
+                    train_end = min_train_size + window_idx * (len(X2) - min_train_size) // n_windows
+                    val_start = train_end
+                    val_end = min(val_start + len(X2) // 10, len(X2))  # 10% validation window
                     
-                    # Determine feature columns (exclude all future_ and target columns)
-                    exclude_cols = set([c for c in df.columns if c.startswith('future_') or c.startswith('target_')]) | {'timestamp'}
-                    curr_features = [c for c in df.columns if c not in exclude_cols]
+                    if val_end - val_start < 10:  # Skip if validation set too small
+                        continue
                     
-                    if feature_columns is None:
-                        feature_columns = curr_features
-                    else:
-                        curr_features = feature_columns
+                    X2_train, X2_val = X2[:train_end], X2[val_start:val_end]
+                    y2_train, y2_val = y2[:train_end], y2[val_start:val_end]
                     
-                    X2 = df[curr_features].values
-                    y2 = df[target_col].values
-                    X2 = clean_infinite_values(X2)
+                    # Scale data
+                    if window_idx == 0:
+                        global_scaler.partial_fit(X2_train)
+                    X2_train_scaled = global_scaler.transform(X2_train)
+                    X2_val_scaled = global_scaler.transform(X2_val)
                     
-                    # EXPANDING WINDOW VALIDATION (respects temporal order)
-                    # Use multiple train/val splits to get robust metrics
-                    n_windows = 3  # Number of validation windows
-                    min_train_size = int(len(X2) * 0.6)  # Start with 60% for first window
+                    # Calculate class weights for imbalanced data
+                    pos_count = (y2_train == 1).sum()
+                    neg_count = (y2_train == 0).sum()
+                    scale_pos_weight = neg_count / (pos_count + 1e-9)
                     
-                    window_metrics = []
-                    window_thresholds = []
+                    # Create datasets
+                    train_data = lgb.Dataset(X2_train_scaled, label=y2_train)
+                    val_data = lgb.Dataset(X2_val_scaled, label=y2_val, reference=train_data)
                     
-                    for window_idx in range(n_windows):
-                        # Calculate split points for this window
-                        train_end = min_train_size + window_idx * (len(X2) - min_train_size) // n_windows
-                        val_start = train_end
-                        val_end = min(val_start + len(X2) // 10, len(X2))  # 10% validation window
-                        
-                        if val_end - val_start < 10:  # Skip if validation set too small
-                            continue
-                        
-                        X2_train, X2_val = X2[:train_end], X2[val_start:val_end]
-                        y2_train, y2_val = y2[:train_end], y2[val_start:val_end]
-                        
-                        # Scale data
-                        if window_idx == 0:
-                            global_scaler.partial_fit(X2_train)
-                        X2_train_scaled = global_scaler.transform(X2_train)
-                        X2_val_scaled = global_scaler.transform(X2_val)
-                        
-                        # Calculate class weights for imbalanced data
-                        pos_count = (y2_train == 1).sum()
-                        neg_count = (y2_train == 0).sum()
-                        scale_pos_weight = neg_count / (pos_count + 1e-9)
-                        
-                        # Create datasets
-                        train_data = lgb.Dataset(X2_train_scaled, label=y2_train)
-                        val_data = lgb.Dataset(X2_val_scaled, label=y2_val, reference=train_data)
-                        
-                        # OPTIMIZED: Better hyperparameters for 90%+ F1 score
-                        temp_model = lgb.train(
-                            params={
-                                   'objective': 'binary',
-                                    'metric': ['binary_logloss', 'auc'],
-                                    'verbosity': -1,
-                                    'boosting_type': 'gbdt',
-                                    'learning_rate': 0.13698321058459595,  # Lower for better convergence
-                                    'num_leaves': 197,  # Reduced to prevent overfitting
-                                    'max_depth': 7,  # Add depth limit
-                                    'feature_fraction': 0.9990134906457083,  # Feature subsampling
-                                    'bagging_fraction': 0.7919531063274406,  # Row subsampling
-                                    'bagging_freq': 2,  # Enable bagging
-                                    'min_child_samples': 59,  # Increase for regularization
-                                    'min_data_in_leaf': 58,  # Better generalization
-                                    'min_sum_hessian_in_leaf': 0.01,
-                                    'min_gain_to_split': 0.07886629709565672,  # Prevent weak splits
-                                    'max_bin': 255,
-                                    'lambda_l1': 0.45742885685991064,  # Increased L1 regularization
-                                    'lambda_l2': 4.202152370210783,  # Increased L2 regularization
-                                    'scale_pos_weight': scale_pos_weight,  # Handle class imbalance
-                                    'seed': 42,
-                                    'force_col_wise': True
-                            },
-                            train_set=train_data,
-                            valid_sets=[val_data],
-                            num_boost_round=500,  # Increase iterations
-                            callbacks=[lgb.early_stopping(stopping_rounds=50), lgb.log_evaluation(period=0)]
+                    item_data = [(X2_train_scaled, y2_train, X2_val_scaled, y2_val, curr_features)]
+
+
+                    study = optuna.create_study(
+                        direction='maximize',
+                        sampler=optuna.samplers.TPESampler(n_startup_trials=5, multivariate=True),  # Smarter sampling
+                        pruner=optuna.pruners.SuccessiveHalvingPruner(
+                            min_resource=1,      # Start evaluation after just 1 item
+                            reduction_factor=3   # Aggressive reduction
                         )
-                        
-                        # Optimize threshold on this validation window
-                        y2_val_pred_proba = temp_model.predict(X2_val_scaled)
-                        best_threshold, best_f1 = optimize_threshold(y2_val, y2_val_pred_proba)
-                        
-                        window_thresholds.append(best_threshold)
-                        
-                        # Calculate validation metrics with optimized threshold
-                        y2_val_pred = (y2_val_pred_proba >= best_threshold).astype(int)
-                        val_acc = (y2_val_pred == y2_val).mean()
-                        val_precision = ((y2_val_pred == 1) & (y2_val == 1)).sum() / max((y2_val_pred == 1).sum(), 1)
-                        val_recall = ((y2_val_pred == 1) & (y2_val == 1)).sum() / max((y2_val == 1).sum(), 1)
-                        
-                        window_metrics.append({
-                            'accuracy': val_acc,
-                            'precision': val_precision,
-                            'recall': val_recall,
-                            'f1': best_f1,
-                            'threshold': best_threshold
-                        })
-                        
-                        # Keep the last model (trained on most data)
-                        if window_idx == n_windows - 1 or window_idx == len(range(n_windows)) - 1:
-                            models[model_type]['full'] = temp_model
-                        
-                        del temp_model, X2_train_scaled, X2_val_scaled, train_data, val_data
+                    )
+                    study.optimize(
+                        lambda trial: objective(trial, item_data, model_type),
+                        n_trials= 150,
+                        show_progress_bar=True
+                    )
+
+                    model = lgb.train(
+                        params=study.best_params,
+                        train_set=train_data,
+                        valid_sets=[val_data],
+                        num_boost_round=500, 
+                        callbacks=[lgb.early_stopping(stopping_rounds=50), lgb.log_evaluation(period=0)]
+                    )
                     
-                    # Average metrics across windows for robust estimate
-                    if window_metrics:
-                        avg_f1 = np.mean([m['f1'] for m in window_metrics])
-                        avg_threshold = np.mean(window_thresholds)
-                        
-                        optimal_thresholds[model_type]['full'].append(avg_threshold)
-                        
-                        validation_metrics[model_type]['full'].append({
-                            'item': item_id,
-                            'accuracy': np.mean([m['accuracy'] for m in window_metrics]),
-                            'precision': np.mean([m['precision'] for m in window_metrics]),
-                            'recall': np.mean([m['recall'] for m in window_metrics]),
-                            'f1': avg_f1,
-                            'threshold': avg_threshold,
-                            'samples': len(X2),
-                            'n_windows': len(window_metrics)
-                        })
+                    # Optimize threshold on this validation window
+                    y2_val_pred_proba = model.predict(X2_val_scaled)
+                    best_threshold, best_f1 = optimize_threshold(y2_val, y2_val_pred_proba)
                     
-                    models[model_type]['full_count'] += 1
+                    window_thresholds.append(best_threshold)
                     
-                    del X2, y2, X2_train, X2_val, y2_train, y2_val, df
-            
-            del df_base
-            
-        del data
-        gc.collect()
+                    # Calculate validation metrics with optimized threshold
+                    y2_val_pred = (y2_val_pred_proba >= best_threshold).astype(int)
+                    val_acc = (y2_val_pred == y2_val).mean()
+                    val_precision = ((y2_val_pred == 1) & (y2_val == 1)).sum() / max((y2_val_pred == 1).sum(), 1)
+                    val_recall = ((y2_val_pred == 1) & (y2_val == 1)).sum() / max((y2_val == 1).sum(), 1)
+                    
+                    window_metrics.append({
+                        'accuracy': val_acc,
+                        'precision': val_precision,
+                        'recall': val_recall,
+                        'f1': best_f1,
+                        'threshold': best_threshold
+                    })
+
+                    models[model_type]['full'] = model
+                    
+                
+                # Average metrics across windows for robust estimate
+                if window_metrics:
+                    avg_f1 = np.mean([m['f1'] for m in window_metrics])
+                    avg_threshold = np.mean(window_thresholds)
+                    
+                    optimal_thresholds[model_type]['full'].append(avg_threshold)
+                    
+                    validation_metrics[model_type]['full'].append({
+                        'item': item_id,
+                        'accuracy': np.mean([m['accuracy'] for m in window_metrics]),
+                        'precision': np.mean([m['precision'] for m in window_metrics]),
+                        'recall': np.mean([m['recall'] for m in window_metrics]),
+                        'f1': avg_f1,
+                        'threshold': avg_threshold,
+                        'samples': len(X2),
+                        'n_windows': len(window_metrics)
+                    })
+                
+                models[model_type]['full_count'] += 1
+
     
     # ========== TRAINING COMPLETE ==========
     print("\n" + "="*70)
@@ -559,12 +578,11 @@ def train_three_model_system(item_ids, horizon_bars=1, threshold=0.005, update_m
         return None, None, None, None
     
     # Save models
-    joblib.dump(final_models['buy'], 'buy_lgbm_model.pkl')
-    joblib.dump(final_models['sell'], 'sell_lgbm_model.pkl')
-    joblib.dump(final_models['spread'], 'spread_lgbm_model.pkl')
-    joblib.dump(global_scaler, 'global_scaler.pkl')
-    joblib.dump(feature_columns, 'global_feature_columns.pkl')
-    joblib.dump(item_encoder, 'item_encoder.pkl')
+    joblib.dump(final_models['buy'], f'{item_id}_buy_lgbm_model.pkl')
+    joblib.dump(final_models['sell'], f'{item_id}_sell_lgbm_model.pkl')
+    joblib.dump(final_models['spread'], f'{item_id}_spread_lgbm_model.pkl')
+    joblib.dump(global_scaler, f'{item_id}_global_scaler.pkl')
+    joblib.dump(feature_columns, f'{item_id}_global_feature_columns.pkl')
     
     avg_metrics = {}
     avg_thresholds = {}
@@ -629,15 +647,14 @@ def train_three_model_system(item_ids, horizon_bars=1, threshold=0.005, update_m
     print("  - spread_lgbm_model.pkl")
     print("  - global_scaler.pkl")
     print("  - global_feature_columns.pkl")
-    print("  - item_encoder.pkl")
     print("  - model_metrics.json")
     
-    return final_models, global_scaler, feature_columns, item_encoder
+    return final_models, global_scaler, feature_columns
 
 
 # ------------------- Prediction with Three Models -------------------
 
-def predict_item_three_models(models_dict, scaler, feature_columns, item_encoder, item_id, mayor_data=None):
+def predict_item_three_models(models_dict, scaler, feature_columns, item_id, mayor_data=None):
     """
     Predicts buy price, sell price, and spread directions using three separate models.
     Fetches last day of data directly from API (no historical JSON files).
@@ -646,7 +663,6 @@ def predict_item_three_models(models_dict, scaler, feature_columns, item_encoder
         models_dict: Dictionary with 'buy', 'sell', 'spread' models
         scaler: Fitted StandardScaler
         feature_columns: List of feature column names
-        item_encoder: Fitted LabelEncoder for items
         item_id: Item ID string
         mayor_data: Mayor perks data (optional)
     
@@ -688,8 +704,6 @@ def predict_item_three_models(models_dict, scaler, feature_columns, item_encoder
     if df_base.empty:
         raise ValueError("No valid data to predict on.")
     
-    # Prepare features (no target labels needed for prediction)
-    df_base['item_id_int'] = item_encoder.transform([item_id]*len(df_base))
     
     # Ensure all feature columns exist
     for col in feature_columns:
@@ -808,18 +822,18 @@ def predict_item_three_models(models_dict, scaler, feature_columns, item_encoder
     return result
 
 
-def predict_item_with_data_three_models(models_dict, scaler, feature_columns, item_encoder, item_id, mayor_data, api_data):
+def predict_item_with_data_three_models(models_dict, scaler, feature_columns, item_id, mayor_data, api_data):
     """
     Wrapper that uses pre-fetched API data instead of fetching.
     Used by Flask background loop.
     """
     # Temporarily replace the fetch with provided data
     # Just call the main function but with api_data
-    return predict_item_three_models(models_dict, scaler, feature_columns, item_encoder, item_id, mayor_data)
+    return predict_item_three_models(models_dict, scaler, feature_columns, item_id, mayor_data)
 
 
 # Legacy single-model functions (kept for backward compatibility)
-def predict_item_with_data(global_model, scaler, feature_columns, item_encoder, item_id, mayor_data, api_data):
+def predict_item_with_data(global_model, scaler, feature_columns, item_id, mayor_data, api_data):
     """
     Predicts the direction for a single item using pre-fetched API data.
     
@@ -827,7 +841,6 @@ def predict_item_with_data(global_model, scaler, feature_columns, item_encoder, 
         global_model: Trained LightGBM model
         scaler: Fitted StandardScaler
         feature_columns: List of feature column names
-        item_encoder: Fitted LabelEncoder for items
         item_id: Item ID string
         mayor_data: Mayor perks data (optional)
         api_data: Raw API data list from client (already fetched)
@@ -872,8 +885,6 @@ def predict_item_with_data(global_model, scaler, feature_columns, item_encoder, 
     if df.empty:
         raise ValueError("No valid data after preprocessing.")
     
-    # Add item_id feature
-    df['item_id_int'] = item_encoder.transform([item_id]*len(df))
     
     # Ensure all feature_columns exist (fill missing with 0)
     for col in feature_columns:
@@ -1094,7 +1105,7 @@ def analyze_crash_watch(predictions_list, top_n=10):
             spread_confidence = pred['spread_confidence'] / 100.0
         
         # Only consider DOWN predictions with high confidence
-        if buy_order_direction == 'DOWN' and buy_order_confidence > 0.55:
+        if buy_order_direction == 'DOWN' and buy_order_confidence > 50.0:
             # Estimate crash severity
             crash_severity = abs(buy_order_change_pct) * buy_order_confidence
             
@@ -1126,11 +1137,6 @@ def analyze_crash_watch(predictions_list, top_n=10):
 # ------------------- Example Usage -------------------
 
 if __name__ == '__main__':
-    import sys
-    # CRITICAL: Train on 50+ items for 90%+ F1 score
-    # Training on 1 item = 61% F1 (poor generalization)
-    # Training on 50 items = 80-90%+ F1 (good generalization)
-    # Training on 100 items = 90%+ F1 (excellent generalization)
     number = 3  
     print("\n" + "="*70)
     print(f"OPTIMIZED TRAINING: {number} ITEMS FOR 90%+ F1 SCORE")
@@ -1139,22 +1145,6 @@ if __name__ == '__main__':
     # Fetch all item IDs
     url = "https://sky.coflnet.com/api/items/bazaar/tags"
     item_ids = requests.get(url).json()
-    
-    # Train on 75 items with advanced features and optimized hyperparameters
+
     print(f"\nTraining on {number} items from {len(item_ids)} available items...")
-    print("Advanced features: RSI, MACD, Bollinger Bands, Volume Ratios")
-    print("Optimizations: Class weights, higher boosting rounds, early stopping")
-    print("This will take longer but achieve 90%+ F1 score.\n")
-    models_dict, scaler, feature_columns, item_encoder = train_three_model_system(item_ids[:number])
-    
-    if models_dict is None:
-        print("\nERROR: Training failed. Check data availability.")
-        sys.exit(1)
-    
-    print("\n" + "="*70)
-    print("TRAINING COMPLETE! Models saved successfully.")
-    print("="*70)
-    print("\nYou can now use these models for predictions:")
-    print("  - buy_lgbm_model.pkl")
-    print("  - sell_lgbm_model.pkl")
-    print("  - spread_lgbm_model.pkl")
+    train_three_model_system("BOOSTER_COOKIE")

@@ -1,8 +1,6 @@
-#!/usr/bin/env python3
 """
 Flask API Server for Bazaar Price Prediction with Minecraft Mod Integration
 - Auto-trains full model on startup if not present
-- Supports incremental learning with 90/10 split and mayor data
 - Provides endpoints for Minecraft mod to fetch buy/sell recommendations
 """
 
@@ -20,6 +18,7 @@ from LGBMfulldata import (predict_item_three_models, train_three_model_system,
                            analyze_best_flips, analyze_best_investments, analyze_crash_watch)
 from data_utils import fetch_recent_data
 from mayor_utils import get_mayor_perks
+import traceback
 
 
 app = Flask(__name__)
@@ -32,7 +31,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 models_dict = None  # Will contain 'buy', 'sell', 'spread' models
 scaler = None
 feature_columns = None
-item_encoder = None
 mayor_data_cache = None
 model_trained = False
 
@@ -42,37 +40,30 @@ predictions_file = os.path.join(SCRIPT_DIR, 'predictions_cache.json')
 prediction_lock = threading.Lock()
 
 
-def check_model_exists():
-    """Check if all required three-model files exist."""
-    model_files = [
-        'buy_lgbm_model.pkl',
-        'sell_lgbm_model.pkl',
-        'spread_lgbm_model.pkl',
-        'global_scaler.pkl',
-        'global_feature_columns.pkl',
-        'item_encoder.pkl'
-    ]
-    return all(os.path.exists(os.path.join(SCRIPT_DIR, f)) for f in model_files)
 
 
 def load_model_artifacts():
     """Load existing THREE model artifacts."""
-    global models_dict, scaler, feature_columns, item_encoder, mayor_data_cache, model_trained
+    global models_dict, scaler, feature_columns, mayor_data_cache, model_trained
     
     print("Loading three-model system artifacts...")
     try:
-        # Load all 3 models
-        models_dict = {
-            'buy': joblib.load(os.path.join(SCRIPT_DIR, 'buy_lgbm_model.pkl')),
-            'sell': joblib.load(os.path.join(SCRIPT_DIR, 'sell_lgbm_model.pkl')),
-            'spread': joblib.load(os.path.join(SCRIPT_DIR, 'spread_lgbm_model.pkl'))
-        }
-        
-        scaler = joblib.load(os.path.join(SCRIPT_DIR, 'global_scaler.pkl'))
-        feature_columns = joblib.load(os.path.join(SCRIPT_DIR, 'global_feature_columns.pkl'))
-        item_encoder = joblib.load(os.path.join(SCRIPT_DIR, 'item_encoder.pkl'))
-        
-        # Cache mayor data
+        url = "https://sky.coflnet.com/api/items/bazaar/tags"
+        item_ids = requests.get(url).json()
+
+        models_dict = {}  # dictionary to store models for each item
+        scaler = {}
+        feature_columns = {}
+
+        for item_id in item_ids:
+            models_dict[item_id] = {
+                'buy': joblib.load(os.path.join(SCRIPT_DIR, f'{item_id}_buy_lgbm_model.pkl')),
+                'sell': joblib.load(os.path.join(SCRIPT_DIR, f'{item_id}_sell_lgbm_model.pkl')),
+                'spread': joblib.load(os.path.join(SCRIPT_DIR, f'{item_id}_spread_lgbm_model.pkl'))
+            }
+            
+            scaler[item_id] = joblib.load(os.path.join(SCRIPT_DIR, f'{item_id}_global_scaler.pkl'))
+            feature_columns[item_id] = joblib.load(os.path.join(SCRIPT_DIR, f'{item_id}_global_feature_columns.pkl'))
         mayor_data_cache = get_mayor_perks()
         
         model_trained = True
@@ -83,7 +74,6 @@ def load_model_artifacts():
         return True
     except Exception as e:
         print(f"❌ Error loading model artifacts: {e}")
-        import traceback
         traceback.print_exc()
         return False
 
@@ -96,10 +86,8 @@ def get_available_items():
     try:
         if os.path.exists(json_dir):
             for filename in os.listdir(json_dir):
-                if filename.startswith("bazaar_history_combined_") and filename.endswith(".pkl.gz"):
-                    # Extract item ID from filename
-                    item_id = filename.replace("bazaar_history_combined_", "").replace(".pkl.gz", "")
-                    available_items.append(item_id)
+                item_id = filename.replace("bazaar_history_", "").replace(".pkl.gz", "")
+                available_items.append(item_id)
             print(f"📁 Found {len(available_items)} items with downloaded data")
         else:
             print(f"⚠️  JSON directory not found: {json_dir}")
@@ -163,8 +151,8 @@ def background_prediction_loop():
                 try:
                     # Make prediction with THREE models
                     prediction = predict_item_three_models(
-                        models_dict, scaler, feature_columns, item_encoder,
-                        item_id, mayor_data_cache
+                        models_dict[item_id], scaler[item_id], feature_columns[item_id],
+                        item_id, mayor_data_cache[item_id]
                     )
                     
                     # Store comprehensive prediction in cache
@@ -233,53 +221,9 @@ def background_prediction_loop():
             
         except Exception as e:
             print(f"❌ Error in prediction loop: {e}")
-            import traceback
             traceback.print_exc()
             time.sleep(30)  # Wait longer on error
 
-
-def train_full_model():
-    """Train the full model using three-model system."""
-    global models_dict, scaler, feature_columns, item_encoder, mayor_data_cache, model_trained
-    
-    print("\n" + "="*70)
-    print("MODEL NOT FOUND - TRAINING FULL MODEL")
-    print("="*70)
-    print("This may take several minutes...")
-    
-    try:
-        # Fetch all item IDs
-        print("\nFetching item IDs from API...")
-        url = "https://sky.coflnet.com/api/items/bazaar/tags"
-        item_ids = requests.get(url).json()
-        print(f"Training on {len(item_ids)} items with two-phase temporal CV")
-        
-        # Train using three-model system
-        # update_with_new_data=True on retrain to fetch only new data since last update
-        print("\nNote: Set update_with_new_data=True in data_utils calls for retraining")
-        models_dict, scaler, feature_columns, item_encoder = train_three_model_system(item_ids)
-        
-        if models_dict is None:
-            print("❌ Training failed - no valid data found.")
-            return False
-        
-        # Cache mayor data
-        mayor_data_cache = get_mayor_perks()
-        
-        model_trained = True
-        
-        print("\n" + "="*70)
-        print("✅ MODEL TRAINING COMPLETE")
-        print("="*70)
-        print("Model artifacts saved and ready for predictions!")
-        
-        return True
-        
-    except Exception as e:
-        print(f"❌ Training error: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
 
 
 # Initialize on startup
@@ -339,7 +283,7 @@ def predict_single(item_id):
     try:
         # Make prediction using three-model system
         prediction = predict_item_three_models(
-            models_dict, scaler, feature_columns, item_encoder,
+            models_dict[item_id], scaler[item_id], feature_columns[item_id],
             item_id, mayor_data_cache
         )
         
@@ -400,7 +344,7 @@ def predict_batch():
             try:
                 # Make prediction using three-model system
                 prediction = predict_item_three_models(
-                    models_dict, scaler, feature_columns, item_encoder,
+                    models_dict[item_id], scaler[item_id], feature_columns[item_id],
                     item_id, mayor_data_cache
                 )
                 predictions.append(prediction)
@@ -436,7 +380,7 @@ def get_cached_predictions():
     """
     try:
         item_ids_param = request.args.get('item_ids', None)
-        limit = int(request.args.get('limit', 10))
+        limit = int(request.args.get('limit', 100))
         min_confidence = float(request.args.get('min_confidence', 50.0))
         
         with prediction_lock:
@@ -479,19 +423,19 @@ def get_recommendations():
         return jsonify({'error': 'Model not loaded'}), 503
     
     try:
-        limit = int(request.args.get('limit', 10))
+        limit = int(request.args.get('limit', 100))
         min_confidence = float(request.args.get('min_confidence', 50.0))
         
-        # Get all items from encoder
-        all_items = list(item_encoder.classes_)  # Use all items the model was trained on
         
         recommendations = []
-        
+        url = "https://sky.coflnet.com/api/items/bazaar/tags"
+        all_items = requests.get(url).json()
+
         for item_id in all_items:
             try:
                 # Make prediction using three-model system
                 prediction = predict_item_three_models(
-                    models_dict, scaler, feature_columns, item_encoder,
+                    models_dict[item_id], scaler[item_id], feature_columns[item_id],
                     item_id, mayor_data_cache
                 )
                 
@@ -533,7 +477,7 @@ def get_best_flips():
         - limit: int (default 10)
     """
     try:
-        limit = int(request.args.get('limit', 10))
+        limit = int(request.args.get('limit', 100))
         
         with prediction_lock:
             predictions_list = list(cached_predictions.values())
@@ -561,7 +505,7 @@ def get_best_investments():
     """
     try:
         timeframe_str = request.args.get('timeframe', '1d')
-        limit = int(request.args.get('limit', 10))
+        limit = int(request.args.get('limit', 100))
         
         # Parse timeframe
         timeframe_days = {
@@ -595,7 +539,7 @@ def get_crash_watch():
         - limit: int (default 10)
     """
     try:
-        limit = int(request.args.get('limit', 10))
+        limit = int(request.args.get('limit', 100))
         
         with prediction_lock:
             predictions_list = list(cached_predictions.values())
@@ -620,20 +564,9 @@ if __name__ == '__main__':
     print("="*70)
     
     # Check if model exists, if not train it
-    if check_model_exists():
-        print("\n✅ Model files found - loading existing model...")
-        if load_model_artifacts():
-            print("Ready to serve predictions!")
-        else:
-            print("Failed to load model, attempting to train...")
-            if not train_full_model():
-                print("❌ Cannot start server without a trained model.")
-                exit(1)
-    else:
-        print("\n⚠️  Model files not found - training full model...")
-        if not train_full_model():
-            print("❌ Cannot start server without a trained model.")
-            exit(1)
+    if load_model_artifacts():
+        print("Ready to serve predictions!")
+
     
     # Load cached predictions
     load_cached_predictions()

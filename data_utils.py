@@ -8,6 +8,22 @@ import pickle
 import asyncio
 import aiohttp
 from itertools import cycle
+from dateutil import parser
+import os
+
+
+def parse_timestamp(ts_str):
+    """Parse timestamp from various formats."""
+    fmts = ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d")
+    for fmt in fmts:
+        try:
+            return datetime.strptime(ts_str, fmt)
+        except Exception:
+            continue
+    try:
+        return datetime.fromisoformat(ts_str)
+    except Exception:
+        raise ValueError(f"Unrecognized timestamp format: {ts_str}")
 
 # Global session with connection pooling
 _session = None
@@ -127,7 +143,6 @@ def find_oldest_available_data(item, fallback_date=datetime(2020, 9, 9, 0, 0, 0)
                     oldest_date = datetime.fromtimestamp(ts / 1000)  # Milliseconds to seconds
                 else:
                     # Try parsing as ISO string
-                    from dateutil import parser
                     oldest_date = parser.parse(str(ts))
                 
                 print(f"  ✓ Found data starting from: {oldest_date.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -368,7 +383,6 @@ def load_or_fetch_item_data(item_id, fetch_if_missing=True, update_with_new_data
     Returns:
         List of data entries, or None if file doesn't exist and fetch_if_missing is False
     """
-    import os
     
     json_dir = "/Users/samuelbraga/Json Files"
     
@@ -435,7 +449,6 @@ def load_or_fetch_item_data(item_id, fetch_if_missing=True, update_with_new_data
         for entry in reversed(data):
             if isinstance(entry, dict) and 'timestamp' in entry:
                 try:
-                    from LGBMfulldata import parse_timestamp
                     latest_timestamp = parse_timestamp(entry['timestamp'])
                     break
                 except:

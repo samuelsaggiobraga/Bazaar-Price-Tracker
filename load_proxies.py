@@ -4,7 +4,7 @@ Load proxies with proper format conversion.
 Handles format: IP:PORT:USERNAME:PASSWORD
 """
 
-from data_utils import configure_proxy_pool, fetch_all_data_fast
+from data_utils import configure_proxy_pool
 
 def parse_proxy_line(line):
     """
@@ -71,5 +71,3 @@ if __name__ == '__main__':
     
     print("\n✓ Proxies configured!")
     print("\nNow you can run:")
-    print("  from data_utils import fetch_all_data_fast")
-    print("  data = fetch_all_data_fast('ENCHANTMENT_ULTIMATE_WISE_5')")
