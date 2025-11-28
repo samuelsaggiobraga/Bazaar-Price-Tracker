@@ -57,9 +57,9 @@ def load_model_artifacts():
 
         for item_id in item_ids:
             models_dict[item_id] = {
-                'buy': joblib.load(os.path.join(SCRIPT_DIR, f'{item_id}_buy_lgbm_model.pkl')),
-                'sell': joblib.load(os.path.join(SCRIPT_DIR, f'{item_id}_sell_lgbm_model.pkl')),
-                'spread': joblib.load(os.path.join(SCRIPT_DIR, f'{item_id}_spread_lgbm_model.pkl'))
+                'buy': joblib.load(os.path.join(SCRIPT_DIR, f'{item_id}_buy_LGBM_model.pkl')),
+                'sell': joblib.load(os.path.join(SCRIPT_DIR, f'{item_id}_sell_LGBM_model.pkl')),
+                'spread': joblib.load(os.path.join(SCRIPT_DIR, f'{item_id}_spread_LGBM_model.pkl'))
             }
             
             scaler[item_id] = joblib.load(os.path.join(SCRIPT_DIR, f'{item_id}_global_scaler.pkl'))

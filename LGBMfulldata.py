@@ -9,17 +9,24 @@ import lightgbm as lgb
 from data_utils import load_or_fetch_item_data, parse_timestamp
 from mayor_utils import get_mayor_perks, match_mayor_perks
 import requests
-import sys
 from tqdm import tqdm
 import warnings
 import gc
+from sklearn.metrics import precision_score
+import os
 warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
+warnings.filterwarnings(
+    "ignore",
+    message="The reported value is ignored because this `step` .* is already reported.",
+)
+
 # ------------------- Helpers -------------------
 
 def add_time_features(df, ts_col='timestamp'):
     dt = pd.to_datetime(df[ts_col])
     df['hour'] = dt.dt.hour
     df['minute'] = dt.dt.minute
+    df['second'] = dt.dt.second
     # cyclical encoding
     df['hour_sin'] = np.sin(2 * np.pi * df['hour']/24)
     df['hour_cos'] = np.cos(2 * np.pi * df['hour']/24)
@@ -28,6 +35,8 @@ def add_time_features(df, ts_col='timestamp'):
     df['dayofweek'] = dt.dt.dayofweek
     df['dayofweek_sin'] = np.sin(2*np.pi*df['dayofweek']/7)
     df['dayofweek_cos'] = np.cos(2*np.pi*df['dayofweek']/7)
+    df['delta_seconds'] = df['timestamp'].diff().dt.total_seconds().fillna(0)
+    df['delta_minutes'] = df['delta_seconds'] / 60.0
     return df
 
 def build_lagged_features(df, price_col='buy_price', vol_col='buy_volume', lags=(1,2,3,6,12), prefix=''):
@@ -48,8 +57,8 @@ def build_lagged_features(df, price_col='buy_price', vol_col='buy_volume', lags=
         df[f'{prefix}vol_lag_{lag}'] = df[vol_col].shift(lag)
     windows = [3,6,12]
     for w in windows:
-        df[f'{prefix}roll_mean_{w}'] = df[ret_col].rolling(w).mean()
-        df[f'{prefix}roll_std_{w}'] = df[ret_col].rolling(w).std()
+        df[f'{prefix}roll_mean_{w}'] = df[ret_col].rolling(w, min_periods=w).mean()
+        df[f'{prefix}roll_std_{w}'] = df[ret_col].rolling(w, min_periods=w).std()
         if w>=6:
             df[f'{prefix}roll_skew_{w}'] = df[ret_col].rolling(w).skew()
             df[f'{prefix}roll_kurt_{w}'] = df[ret_col].rolling(w).kurt()
@@ -211,6 +220,65 @@ def label_spread_direction(df, horizon_bars=1, threshold=0.005):
     
     return df
 
+
+def label_local_max_buy(df, window_back=5, window_forward=5, min_future_drop=0.005):
+    """Label local maxima on BUY price (potential sell points).
+    
+    A bar is labeled 1 if:
+    - Its buy_price is the maximum within a local window [t-window_back, t+window_forward]
+    - And within the forward window it drops by at least `min_future_drop`.
+    
+    This is used for "sell at local top" investment signals.
+    """
+    df = df.copy()
+    prices = df['buy_price'].values
+    n = len(df)
+    target = np.zeros(n, dtype=int)
+
+    for i in range(window_back, n - window_forward):
+        window = prices[i-window_back:i+window_forward+1]
+        if prices[i] >= window.max():
+            future_window = prices[i+1:i+window_forward+1]
+            if len(future_window) == 0:
+                continue
+            future_min = future_window.min()
+            drop = (prices[i] - future_min) / (prices[i] + 1e-9)
+            if drop >= min_future_drop:
+                target[i] = 1
+
+    df['target_buy_top'] = target
+    return df
+
+
+def label_local_min_sell(df, window_back=5, window_forward=5, min_future_rise=0.005):
+    """Label local minima on SELL price (crash bottoms / buy-the-dip points).
+    
+    A bar is labeled 1 if:
+    - Its sell_price is the minimum within a local window [t-window_back, t+window_forward]
+    - And within the forward window it rises by at least `min_future_rise`.
+    
+    This is used for "buy the dip" crash signals.
+    """
+    df = df.copy()
+    prices = df['sell_price'].values
+    n = len(df)
+    target = np.zeros(n, dtype=int)
+
+    for i in range(window_back, n - window_forward):
+        window = prices[i-window_back:i+window_forward+1]
+        if prices[i] <= window.min():
+            future_window = prices[i+1:i+window_forward+1]
+            if len(future_window) == 0:
+                continue
+            future_max = future_window.max()
+            rise = (future_max - prices[i]) / (prices[i] + 1e-9)
+            if rise >= min_future_rise:
+                target[i] = 1
+
+    df['target_sell_crash'] = target
+    return df
+
+
 def clean_infinite_values(X):
     """Replace infinite and too large values with finite numbers."""
     X = np.asarray(X, dtype=np.float64)
@@ -223,145 +291,131 @@ def clean_infinite_values(X):
     return X
 
 
-def optimize_threshold(y_true, y_pred_proba):
-    """Find optimal decision threshold to maximize F1 score.
+def optimize_precision_threshold(y_true, y_pred_proba, min_positives=10):
+    """Find optimal decision threshold to maximize precision on positive events.
+    
+    We scan thresholds and keep the one with highest precision, subject to
+    producing at least `min_positives` predicted positives. This avoids
+    degenerate thresholds that fire on 1 bar out of thousands.
     
     Args:
-        y_true: True labels
-        y_pred_proba: Predicted probabilities
+        y_true: True labels (0/1)
+        y_pred_proba: Predicted probabilities for class 1
+        min_positives: Minimum number of predicted positives to consider
     
     Returns:
-        best_threshold: Optimal threshold
-        best_f1: Best F1 score achieved
+        best_threshold: Threshold achieving best precision
+        best_precision: Precision at that threshold
+        best_f1: F1 at that threshold (for logging/diagnostics)
     """
     thresholds = np.arange(0.1, 0.9, 0.05)
-    best_f1 = 0
+    best_precision = 0.0
+    best_f1 = 0.0
     best_threshold = 0.5
     
     for threshold in thresholds:
         y_pred = (y_pred_proba >= threshold).astype(int)
+        positives = (y_pred == 1).sum()
+        if positives < min_positives:
+            continue
         
         tp = ((y_pred == 1) & (y_true == 1)).sum()
         fp = ((y_pred == 1) & (y_true == 0)).sum()
         fn = ((y_pred == 0) & (y_true == 1)).sum()
         
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
         
-        if f1 > best_f1:
+        if precision > best_precision or (precision == best_precision and f1 > best_f1):
+            best_precision = precision
             best_f1 = f1
             best_threshold = threshold
     
-    return best_threshold, best_f1
+    return best_threshold, best_precision, best_f1
 
-def objective(trial, item_data, model_type='buy'):
+from sklearn.metrics import precision_score
 
-    # Suggest hyperparameters ONCE per trial (not per item!)
-    param_template = {
-        'objective': 'binary',
-        'metric': 'auc',
-        'verbosity': -1,
-        'boosting_type': 'gbdt',
-        # Slightly narrower, speed‑oriented search space
-        'learning_rate': trial.suggest_float('learning_rate', 0.05, 0.25, log=True),
-        'num_leaves': trial.suggest_int('num_leaves', 15, 63),  # smaller trees = faster
-        'max_depth': trial.suggest_int('max_depth', 3, 6),      # shallower trees
-        'feature_fraction': trial.suggest_float('feature_fraction', 0.6, 0.9),
-        'bagging_fraction': trial.suggest_float('bagging_fraction', 0.6, 0.9),
-        'bagging_freq': trial.suggest_int('bagging_freq', 1, 3),
-        'min_child_samples': trial.suggest_int('min_child_samples', 20, 100),
-        'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 20, 100),
-        'lambda_l1': trial.suggest_float('lambda_l1', 0.0, 0.5),
-        'lambda_l2': trial.suggest_float('lambda_l2', 0.0, 2.0),
-        'seed': 42,
-        'force_col_wise': True,
-        'num_threads': -1  # use all available cores
+def objective(trial, X, y, n_splits=3):
+    # Suggest hyperparameters once per trial
+    param = {
+        "num_leaves": trial.suggest_int("num_leaves", 16, 64),
+        "learning_rate": trial.suggest_float("learning_rate", 0.03, 0.2, log=True),
+        "objective": "binary",
+        "metric": "auc",  
+        "boosting_type": "gbdt",
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 3,
+        "max_depth": -1,
+        "verbosity": -1,
+        "num_threads": os.cpu_count()
     }
 
+    n_samples = len(X)
+    fold_size = n_samples // (n_splits + 1)
+    # Collect best precision scores (with threshold chosen by optimize_precision_threshold) for each split
+    all_precision = []
 
-    all_f1 = []
-    processed_items = 0
+    for i in range(n_splits):
+        train_end = fold_size * (i + 1)
+        val_start = train_end
+        val_end = val_start + fold_size
 
-    # Progress bar over preloaded datasets
-    pbar = tqdm(
-        range(len(item_data)),
-        desc=f"Trial {trial.number:3d}",
-        leave=False
-    )
+        X_train, y_train = X[:train_end], y[:train_end]
+        X_val, y_val = X[val_start:val_end], y[val_start:val_end]
 
-    for idx in pbar:
-        X_train, y_train, X_val, y_val, features = item_data[idx]
-
-        # SKIP SCALING - LightGBM doesn't need it and it's slow
-        X_train_scaled = X_train
-        X_val_scaled = X_val
-
-        # Calculate class weights and add to params
+        # Compute class imbalance
         pos_count = (y_train == 1).sum()
         neg_count = (y_train == 0).sum()
         scale_pos_weight = neg_count / (pos_count + 1e-9)
-
-        # Use the params suggested at the start of the trial
-        param = param_template.copy()
         param['scale_pos_weight'] = scale_pos_weight
 
-        # Create LightGBM datasets
-        train_data = lgb.Dataset(X_train_scaled, label=y_train, free_raw_data=True)
-        val_data = lgb.Dataset(X_val_scaled, label=y_val, reference=train_data, free_raw_data=True)
+        train_data = lgb.Dataset(X_train, label=y_train, free_raw_data=False)
+        val_data = lgb.Dataset(X_val, label=y_val, reference=train_data, free_raw_data=False)
 
-        # Train with aggressive pruning
-        pruning_callback = LightGBMPruningCallback(trial, 'auc')
+        pruning_callback = LightGBMPruningCallback(trial, "auc")
 
         try:
             model = lgb.train(
                 param,
                 train_data,
                 valid_sets=[val_data],
-                num_boost_round=500,  # fewer rounds for speed; early stopping will cut further
+                num_boost_round=500,
                 callbacks=[
-                    lgb.early_stopping(stopping_rounds=50),  # ultra‑aggressive early stopping
-                    pruning_callback,                       # prune bad trials ASAP
+                    lgb.early_stopping(stopping_rounds=50),
+                    pruning_callback,
                     lgb.log_evaluation(period=0)
                 ]
             )
 
-            # Predict and evaluate
-            y_pred_proba = model.predict(X_val_scaled)
-            _, best_f1 = optimize_threshold(y_val, y_pred_proba)
-            all_f1.append(best_f1)
-            processed_items += 1
+            # Predict probabilities
+            y_pred_proba = model.predict(X_val)
+
+            # Choose threshold that maximizes precision on events
+            best_threshold, best_precision, best_f1 = optimize_precision_threshold(y_val, y_pred_proba)
+
+            all_precision.append(best_precision)
 
         except optuna.TrialPruned:
-            # Clean up and re-raise to prune this trial
-            del X_train_scaled, X_val_scaled, y_train, y_val, train_data, val_data
+            del X_train, X_val, y_train, y_val, train_data, val_data
             gc.collect()
             raise
         except Exception:
-            # Clean up on any other error and skip this item
-            del X_train_scaled, X_val_scaled, y_train, y_val, train_data, val_data
+            del X_train, X_val, y_train, y_val, train_data, val_data
             gc.collect()
             continue
 
-        # Update progress bar with current F1
-        current_f1 = np.mean(all_f1) if all_f1 else 0.0
-        pbar.set_postfix({
-            'F1': f'{current_f1:.4f}',
-            'processed': processed_items,
-        })
+        del X_train, X_val, y_train, y_val, train_data, val_data, model, y_pred_proba
+        gc.collect()
 
-        # Aggressive memory cleanup after EACH item
-        del X_train_scaled, X_val_scaled, y_train, y_val, train_data, val_data, model, y_pred_proba
-        # Skip gc.collect() in hot loop - only call periodically
-        if processed_items % 50 == 0:
-            gc.collect()
-
-    pbar.close()
-
-    if not all_f1:
+    if not all_precision:
         return 0.0
 
-    return np.mean(all_f1)
+    # Return mean precision across rolling splits
+    return np.mean(all_precision)
+
+
 
 def train_three_model_system(item_id, horizon_bars=1, threshold=0.005, update_mode=False):
     """
@@ -386,7 +440,6 @@ def train_three_model_system(item_id, horizon_bars=1, threshold=0.005, update_mo
     print("\n" + "="*70)
     print("THREE-MODEL SYSTEM: SEQUENTIAL TWO-PHASE TEMPORAL TRAINING")
     print("Training: BUY model | SELL model | SPREAD model")
-    print("Processing one item at a time to minimize RAM usage")
     print("="*70 + "\n")
     
     # Get mayor data to determine split point
@@ -417,14 +470,82 @@ def train_three_model_system(item_id, horizon_bars=1, threshold=0.005, update_mo
     feature_columns = None  # Shared feature columns
     
     print("\n" + "="*70)
-    print("Processing Data (sequential)")
+    print("Processing Data")
     print("="*70 + "\n")
     
         
     data = load_or_fetch_item_data(item_id, update_with_new_data=update_mode)
     df_base = prepare_dataframe_from_raw(data, mayor_data, has_mayor_system=True)
     if not df_base.empty and len(df_base) >= 20:
-        # Train all 3 models on same data
+        # ===================== BUY OPTIMIZATION (local tops) =====================
+        df_buy = df_base.copy()
+        df_buy = label_local_max_buy(df_buy, window_back=horizon_bars, window_forward=horizon_bars, min_future_drop=threshold)
+        df_buy.dropna(inplace=True)
+        
+        exclude_cols_buy = set([c for c in df_buy.columns if c.startswith('future_') or c.startswith('target_')]) | {'timestamp'}
+        feature_cols_buy = [c for c in df_buy.columns if c not in exclude_cols_buy]
+
+        y_opt_buy = df_buy['target_buy_top'].values
+        
+        X_train_raw_buy = df_buy[feature_cols_buy].values
+        X_train_raw_buy = clean_infinite_values(X_train_raw_buy)
+        # Fit shared scaler on BUY features (used later for all models)
+        global_scaler.fit(X_train_raw_buy)
+        X_opt_buy = X_train_raw_buy  # LightGBM is tree-based; scaling is not required for optimization
+
+        study_buy = optuna.create_study(
+            direction="maximize",
+            sampler=optuna.samplers.TPESampler(
+                n_startup_trials=10, 
+                n_ei_candidates=32, 
+                multivariate=True
+            ),
+            pruner = optuna.pruners.MedianPruner(
+                n_startup_trials=5,
+                n_warmup_steps=10,
+                interval_steps=10
+            )
+        )
+        
+        study_buy.optimize(lambda trial: objective(trial, X_opt_buy, y_opt_buy), n_trials=20, show_progress_bar=True)
+        best_params_buy = study_buy.best_params
+        print("✔ Best BUY params found once for item:", best_params_buy)
+
+        # ===================== SELL OPTIMIZATION =====================
+        # Default to BUY params; if we have enough SELL data, run a separate study
+        best_params_sell = best_params_buy
+        df_sell_opt = df_base.copy()
+        df_sell_opt = label_local_min_sell(df_sell_opt, window_back=horizon_bars, window_forward=horizon_bars, min_future_rise=threshold)
+        df_sell_opt.dropna(inplace=True)
+        if len(df_sell_opt) >= 20:
+            exclude_cols_sell = set([c for c in df_sell_opt.columns if c.startswith('future_') or c.startswith('target_')]) | {'timestamp'}
+            feature_cols_sell = [c for c in df_sell_opt.columns if c not in exclude_cols_sell]
+
+            y_opt_sell = df_sell_opt['target_sell_crash'].values
+            X_train_raw_sell = df_sell_opt[feature_cols_sell].values
+            X_train_raw_sell = clean_infinite_values(X_train_raw_sell)
+            X_opt_sell = X_train_raw_sell
+
+            study_sell = optuna.create_study(
+                direction="maximize",
+                sampler=optuna.samplers.TPESampler(
+                    n_startup_trials=10, 
+                    n_ei_candidates=32, 
+                    multivariate=True
+                ),
+                pruner = optuna.pruners.MedianPruner(
+                    n_startup_trials=5,
+                    n_warmup_steps=10,
+                    interval_steps=10
+                )
+            )
+
+            study_sell.optimize(lambda trial: objective(trial, X_opt_sell, y_opt_sell), n_trials=20, show_progress_bar=True)
+            best_params_sell = study_sell.best_params
+            print("✔ Best SELL params found once for item:", best_params_sell)
+        else:
+            print("⚠ Not enough data for SELL optimization, reusing BUY params.")
+        
         for model_type in ['buy', 'sell', 'spread']:
             df = df_base.copy()
             
@@ -432,9 +553,12 @@ def train_three_model_system(item_id, horizon_bars=1, threshold=0.005, update_mo
             if model_type == 'spread':
                 df = label_spread_direction(df, horizon_bars, threshold)
                 target_col = 'target_spread'
-            else:
-                df = label_direction(df, horizon_bars, threshold, price_type=model_type)
-                target_col = f'target_{model_type}'
+            elif model_type == 'buy':
+                df = label_local_max_buy(df, window_back=horizon_bars, window_forward=horizon_bars, min_future_drop=threshold)
+                target_col = 'target_buy_top'
+            elif model_type == 'sell':
+                df = label_local_min_sell(df, window_back=horizon_bars, window_forward=horizon_bars, min_future_rise=threshold)
+                target_col = 'target_sell_crash'
             
             df.dropna(inplace=True)
             
@@ -460,71 +584,68 @@ def train_three_model_system(item_id, horizon_bars=1, threshold=0.005, update_mo
                 
                 window_metrics = []
                 window_thresholds = []
-                
+
                 for window_idx in range(n_windows):
-                    # Calculate split points for this window
                     train_end = min_train_size + window_idx * (len(X2) - min_train_size) // n_windows
                     val_start = train_end
-                    val_end = min(val_start + len(X2) // 10, len(X2))  # 10% validation window
-                    
-                    if val_end - val_start < 10:  # Skip if validation set too small
+                    val_end = min(val_start + len(X2) // 10, len(X2))
+
+                    if val_end - val_start < 10:
                         continue
-                    
+
                     X2_train, X2_val = X2[:train_end], X2[val_start:val_end]
                     y2_train, y2_val = y2[:train_end], y2[val_start:val_end]
-                    
-                    # Scale data
+
+                    # Scale
                     if window_idx == 0:
                         global_scaler.partial_fit(X2_train)
                     X2_train_scaled = global_scaler.transform(X2_train)
                     X2_val_scaled = global_scaler.transform(X2_val)
-                    
-                    # Calculate class weights for imbalanced data
+
+                    # Weighting
                     pos_count = (y2_train == 1).sum()
                     neg_count = (y2_train == 0).sum()
                     scale_pos_weight = neg_count / (pos_count + 1e-9)
-                    
-                    # Create datasets
+
                     train_data = lgb.Dataset(X2_train_scaled, label=y2_train)
                     val_data = lgb.Dataset(X2_val_scaled, label=y2_val, reference=train_data)
-                    
-                    item_data = [(X2_train_scaled, y2_train, X2_val_scaled, y2_val, curr_features)]
 
-
-                    study = optuna.create_study(
-                        direction='maximize',
-                        sampler=optuna.samplers.TPESampler(n_startup_trials=5, multivariate=True),  # Smarter sampling
-                        pruner=optuna.pruners.SuccessiveHalvingPruner(
-                            min_resource=1,      # Start evaluation after just 1 item
-                            reduction_factor=3   # Aggressive reduction
-                        )
-                    )
-                    study.optimize(
-                        lambda trial: objective(trial, item_data, model_type),
-                        n_trials= 150,
-                        show_progress_bar=True
-                    )
+                    # ---- USE THE OPTIMIZED PARAMS FOR THIS MODEL TYPE ----
+                    base_params = best_params_sell if model_type == 'sell' else best_params_buy
+                    params = base_params.copy()
+                    params['metric'] = 'auc'
+                    params['objective'] = 'binary'
+                    params['scale_pos_weight'] = scale_pos_weight
+                    params['boosting_type'] = 'gbdt'
+                    params['feature_fraction'] = 0.8
+                    params['bagging_fraction'] = 0.8
+                    params['bagging_freq'] = 3
+                    params['max_depth'] = -1
+                    params['verbosity'] = -1
+                    params['num_threads'] = os.cpu_count()
 
                     model = lgb.train(
-                        params=study.best_params,
+                        params=params,
                         train_set=train_data,
                         valid_sets=[val_data],
-                        num_boost_round=500, 
-                        callbacks=[lgb.early_stopping(stopping_rounds=50), lgb.log_evaluation(period=0)]
+                        num_boost_round=500,
+                        callbacks=[
+                            lgb.early_stopping(stopping_rounds=50),
+                            lgb.log_evaluation(period=0)
+                        ]
                     )
-                    
-                    # Optimize threshold on this validation window
+
+                    # Threshold optimization (maximize precision on events)
                     y2_val_pred_proba = model.predict(X2_val_scaled)
-                    best_threshold, best_f1 = optimize_threshold(y2_val, y2_val_pred_proba)
-                    
+                    best_threshold, best_precision, best_f1 = optimize_precision_threshold(y2_val, y2_val_pred_proba)
+
                     window_thresholds.append(best_threshold)
-                    
-                    # Calculate validation metrics with optimized threshold
+
                     y2_val_pred = (y2_val_pred_proba >= best_threshold).astype(int)
                     val_acc = (y2_val_pred == y2_val).mean()
-                    val_precision = ((y2_val_pred == 1) & (y2_val == 1)).sum() / max((y2_val_pred == 1).sum(), 1)
+                    val_precision = best_precision
                     val_recall = ((y2_val_pred == 1) & (y2_val == 1)).sum() / max((y2_val == 1).sum(), 1)
-                    
+
                     window_metrics.append({
                         'accuracy': val_acc,
                         'precision': val_precision,
@@ -534,6 +655,7 @@ def train_three_model_system(item_id, horizon_bars=1, threshold=0.005, update_mo
                     })
 
                     models[model_type]['full'] = model
+
                     
                 
                 # Average metrics across windows for robust estimate
@@ -621,12 +743,13 @@ def train_three_model_system(item_id, horizon_bars=1, threshold=0.005, update_mo
             'full_val_f1': avg_metrics.get('spread_full', {}).get('f1', 0),
             'full_threshold': avg_thresholds.get('spread_full', 0.5)
         },
-        'total_items': len(item_ids),
+        # This function trains a single item at a time
+        'total_items': 1,
         'validation_metrics': avg_metrics,
         'optimal_thresholds': avg_thresholds
     }
     
-    with open('model_metrics.json', 'w') as f:
+    with open(f'{item_id}_model_metrics.json', 'w') as f:
         json.dump(sequential_metrics, f, indent=2)
     
     print("\n" + "="*70)
@@ -716,33 +839,44 @@ def predict_item_three_models(models_dict, scaler, feature_columns, item_id, may
     
     latest_idx = -1
     timestamp = str(df_base.iloc[latest_idx]['timestamp'])
+
+    # Load per-item optimal thresholds if available (fallback to 0.5)
+    metrics_path = f"{item_id}_model_metrics.json"
+    buy_threshold = sell_threshold = spread_threshold = 0.5
+    if os.path.exists(metrics_path):
+        try:
+            with open(metrics_path, "r") as f:
+                metrics = json.load(f)
+            buy_threshold = float(metrics.get('buy_model', {}).get('full_threshold', 0.5))
+            sell_threshold = float(metrics.get('sell_model', {}).get('full_threshold', 0.5))
+            spread_threshold = float(metrics.get('spread_model', {}).get('full_threshold', 0.5))
+        except Exception:
+            pass
     
-    # === PREDICT BUY PRICE DIRECTION ===
+    # === PREDICT BUY LOCAL TOP (investment exit) ===
     buy_probs = models_dict['buy'].predict(X_scaled)
-    buy_pred = int((buy_probs[latest_idx] > 0.5))
     buy_prob = float(buy_probs[latest_idx])
-    buy_direction = "UP" if buy_pred == 1 else "DOWN"
-    buy_confidence = buy_prob if buy_pred == 1 else (1 - buy_prob)
-    buy_change_pct = buy_confidence * 0.005
-    if buy_pred == 0:
-        buy_change_pct = -buy_change_pct
+    buy_event = int(buy_prob > buy_threshold)  # 1 = local top
+    buy_direction = "TOP" if buy_event == 1 else "NONE"
+    buy_confidence = buy_prob if buy_event == 1 else (1 - buy_prob)
+    # For tops, expected near-term movement is down; approximate change
+    buy_change_pct = -buy_confidence * 0.005 if buy_event == 1 else 0.0
     predicted_buy_price = current_buy_price * (1 + buy_change_pct)
     
-    # === PREDICT SELL PRICE DIRECTION ===
+    # === PREDICT SELL LOCAL BOTTOM (crash bottom / buy-the-dip) ===
     sell_probs = models_dict['sell'].predict(X_scaled)
-    sell_pred = int((sell_probs[latest_idx] > 0.5))
     sell_prob = float(sell_probs[latest_idx])
-    sell_direction = "UP" if sell_pred == 1 else "DOWN"
-    sell_confidence = sell_prob if sell_pred == 1 else (1 - sell_prob)
-    sell_change_pct = sell_confidence * 0.005
-    if sell_pred == 0:
-        sell_change_pct = -sell_change_pct
+    sell_event = int(sell_prob > sell_threshold)  # 1 = local bottom
+    sell_direction = "BOTTOM" if sell_event == 1 else "NONE"
+    sell_confidence = sell_prob if sell_event == 1 else (1 - sell_prob)
+    # For bottoms, expected near-term movement is up; approximate change
+    sell_change_pct = sell_confidence * 0.005 if sell_event == 1 else 0.0
     predicted_sell_price = current_sell_price * (1 + sell_change_pct)
     
     # === PREDICT SPREAD DIRECTION ===
     spread_probs = models_dict['spread'].predict(X_scaled)
-    spread_pred = int((spread_probs[latest_idx] > 0.5))
     spread_prob = float(spread_probs[latest_idx])
+    spread_pred = int(spread_prob > spread_threshold)
     spread_direction = "WIDEN" if spread_pred == 1 else "NARROW"
     spread_confidence = spread_prob if spread_pred == 1 else (1 - spread_prob)
     
@@ -938,7 +1072,6 @@ def predict_item_with_data(global_model, scaler, feature_columns, item_id, mayor
 
 
 # ------------------- Investment Analysis Functions -------------------
-
 def analyze_best_flips(predictions_list, top_n=10):
     """
     Find best flip opportunities: largest spread where SELL ORDER > BUY ORDER.
@@ -958,43 +1091,52 @@ def analyze_best_flips(predictions_list, top_n=10):
     flip_opportunities = []
     
     for pred in predictions_list:
-        # Support both nested and flattened formats
-        if 'buy' in pred and isinstance(pred['buy'], dict):
-            # Nested format from predict_item_three_models
-            sell_order_price = pred['buy']['current_price']  # What you GET when selling
-            buy_order_price = pred['sell']['current_price']   # What you PAY when buying
-            buy_order_predicted = pred['sell']['predicted_price']
-            sell_order_predicted = pred['buy']['predicted_price']
-            buy_direction = pred['sell']['direction']
-            sell_direction = pred['buy']['direction']
-            spread_direction = pred['spread']['direction']
-        else:
-            # Flattened format from cached predictions
-            sell_order_price = pred['buy_current']  # What you GET when selling
-            buy_order_price = pred['sell_current']   # What you PAY when buying
-            buy_order_predicted = pred['sell_predicted']
-            sell_order_predicted = pred['buy_predicted']
-            buy_direction = pred['sell_direction']
-            sell_direction = pred['buy_direction']
-            spread_direction = pred['spread_direction']
-        
-        # Only consider if profitable (sell order > buy order)
-        if sell_order_price > buy_order_price:
-            spread = sell_order_price - buy_order_price
-            spread_pct = (spread / buy_order_price) * 100
+        try:
+            # Support both nested and flattened formats
+            if 'buy' in pred and isinstance(pred['buy'], dict):
+                # Nested format from predict_item_three_models
+                sell_order_price = pred['buy']['current_price']  # What you GET when selling
+                buy_order_price = pred['sell']['current_price']   # What you PAY when buying
+                buy_order_predicted = pred['sell']['predicted_price']
+                sell_order_predicted = pred['buy']['predicted_price']
+                buy_direction = pred['sell']['direction']
+                sell_direction = pred['buy']['direction']
+                spread_direction = pred['spread']['direction']
+            else:
+                # Flattened format from cached predictions
+                sell_order_price = pred['buy_current']  # What you GET when selling
+                buy_order_price = pred['sell_current']   # What you PAY when buying
+                buy_order_predicted = pred['sell_predicted']
+                sell_order_predicted = pred['buy_predicted']
+                buy_direction = pred['sell_direction']
+                sell_direction = pred['buy_direction']
+                spread_direction = pred['spread_direction']
             
-            flip_opportunities.append({
-                'item_id': pred['item_id'],
-                'buy_order_price': buy_order_price,
-                'sell_order_price': sell_order_price,
-                'spread': spread,
-                'spread_pct': spread_pct,
-                'buy_order_predicted': buy_order_predicted,
-                'sell_order_predicted': sell_order_predicted,
-                'buy_direction': buy_direction,
-                'sell_direction': sell_direction,
-                'spread_direction': spread_direction
-            })
+            # Skip if buy_order_price is zero or negative (invalid data)
+            if buy_order_price <= 0:
+                continue
+            
+            # Only consider if profitable (sell order > buy order)
+            if sell_order_price > buy_order_price:
+                spread = sell_order_price - buy_order_price
+                spread_pct = (spread / buy_order_price) * 100
+                
+                flip_opportunities.append({
+                    'item_id': pred['item_id'],
+                    'buy_order_price': buy_order_price,
+                    'sell_order_price': sell_order_price,
+                    'spread': spread,
+                    'spread_pct': spread_pct,
+                    'buy_order_predicted': buy_order_predicted,
+                    'sell_order_predicted': sell_order_predicted,
+                    'buy_direction': buy_direction,
+                    'sell_direction': sell_direction,
+                    'spread_direction': spread_direction
+                })
+        except (KeyError, TypeError, ZeroDivisionError) as e:
+            # Skip items with missing or invalid data
+            print(f"Skipping item {pred.get('item_id', 'unknown')}: {e}")
+            continue
     
     # Sort by spread percentage (highest first)
     flip_opportunities.sort(key=lambda x: x['spread_pct'], reverse=True)
@@ -1029,12 +1171,13 @@ def analyze_best_investments(predictions_list, timeframe_days=1, top_n=10):
     for pred in predictions_list:
         # Support both nested and flattened formats
         if 'buy' in pred and isinstance(pred['buy'], dict):
-            # Nested format
+            # Nested format from predict_item_three_models
+            # BUY block now represents local TOP signals on sell-order price.
             sell_order_current = pred['buy']['current_price']
             sell_order_predicted = pred['buy']['predicted_price']
             sell_order_change_pct = pred['buy']['change_pct']
             sell_order_confidence = pred['buy']['confidence'] / 100.0
-            sell_order_direction = pred['buy']['direction']
+            sell_order_direction = pred['buy']['direction']  # "TOP" or "NONE"
         else:
             # Flattened format
             sell_order_current = pred['buy_current']
@@ -1043,13 +1186,13 @@ def analyze_best_investments(predictions_list, timeframe_days=1, top_n=10):
             sell_order_confidence = pred['buy_confidence'] / 100.0
             sell_order_direction = pred['buy_direction']
         
-        # Only consider UP predictions
-        if sell_order_direction == 'UP':
-            # Apply timeframe multiplier to expected change
+        # Only consider local TOP signals as potential exit points
+        if sell_order_direction == 'TOP':
+            # Apply timeframe multiplier to expected change (negative change_pct means expected drop)
             scaled_change_pct = sell_order_change_pct * timeframe_multiplier
             
-            # Weighted expected return = confidence * scaled_change
-            weighted_return = sell_order_confidence * scaled_change_pct
+            # For ranking, we still use magnitude of expected move weighted by confidence
+            weighted_return = sell_order_confidence * abs(scaled_change_pct)
             
             investments.append({
                 'item_id': pred['item_id'],
@@ -1084,67 +1227,72 @@ def analyze_crash_watch(predictions_list, top_n=10):
     crash_items = []
     
     for pred in predictions_list:
-        # Support both nested and flattened formats
-        if 'sell' in pred and isinstance(pred['sell'], dict):
-            # Nested format
-            buy_order_current = pred['sell']['current_price']
-            buy_order_predicted = pred['sell']['predicted_price']
-            buy_order_change_pct = pred['sell']['change_pct']
-            buy_order_confidence = pred['sell']['confidence'] / 100.0
-            buy_order_direction = pred['sell']['direction']
-            spread_direction = pred['spread']['direction']
-            spread_confidence = pred['spread']['confidence'] / 100.0
-        else:
-            # Flattened format
-            buy_order_current = pred['sell_current']
-            buy_order_predicted = pred['sell_predicted']
-            buy_order_change_pct = pred['sell_change_pct']
-            buy_order_confidence = pred['sell_confidence'] / 100.0
-            buy_order_direction = pred['sell_direction']
-            spread_direction = pred['spread_direction']
-            spread_confidence = pred['spread_confidence'] / 100.0
+        try:
+            # Support both nested and flattened formats
+            if 'sell' in pred and isinstance(pred['sell'], dict):
+                # Nested format from predict_item_three_models
+                # SELL block now represents local BOTTOM signals on buy-order price.
+                buy_order_current = pred['sell']['current_price']
+                buy_order_predicted = pred['sell']['predicted_price']
+                buy_order_change_pct = pred['sell']['change_pct']
+                buy_order_confidence = pred['sell']['confidence']
+                buy_order_direction = pred['sell']['direction']  # "BOTTOM" or "NONE"
+                spread_direction = pred['spread']['direction']
+                spread_confidence = pred['spread']['confidence']
+            else:
+                # Flattened format
+                buy_order_current = pred['sell_current']
+                buy_order_predicted = pred['sell_predicted']
+                buy_order_change_pct = pred['sell_change_pct']
+                buy_order_confidence = pred['sell_confidence']
+                buy_order_direction = pred['sell_direction']
+                spread_direction = pred['spread_direction']
+                spread_confidence = pred['spread_confidence']
+            
+            # Only consider BOTTOM signals (local minima) with high confidence
+            if buy_order_direction == 'BOTTOM' and buy_order_confidence > 50.0:
+                # Estimate crash severity
+                crash_severity = abs(buy_order_change_pct) * (buy_order_confidence / 100.0)
+                
+                # Estimate reversal timing (rough heuristic)
+                # Strong crash (high confidence) = faster reversal
+                # Estimate in hours: inverse of confidence (higher confidence = sooner reversal expected)
+                estimated_reversal_hours = int(24 / max(buy_order_confidence / 100.0, 0.5))
+                
+                crash_items.append({
+                    'item_id': pred['item_id'],
+                    'current_price': buy_order_current,
+                    'predicted_price': buy_order_predicted,
+                    'crash_pct': buy_order_change_pct,
+                    'confidence': buy_order_confidence,
+                    'crash_severity': crash_severity,
+                    'estimated_reversal_hours': estimated_reversal_hours,
+                    'spread_direction': spread_direction,
+                    'spread_confidence': spread_confidence,
+                    'recommendation': 'WAIT' if estimated_reversal_hours > 12 else 'BUY_DIP'
+                })
         
-        # Only consider DOWN predictions with high confidence
-        if buy_order_direction == 'DOWN' and buy_order_confidence > 50.0:
-            # Estimate crash severity
-            crash_severity = abs(buy_order_change_pct) * buy_order_confidence
-            
-            # Estimate reversal timing (rough heuristic)
-            # Strong crash (high confidence) = faster reversal
-            # Estimate in hours: inverse of confidence (higher confidence = sooner reversal expected)
-            estimated_reversal_hours = int(24 / max(buy_order_confidence, 0.5))
-            
-            crash_items.append({
-                'item_id': pred['item_id'],
-                'current_price': buy_order_current,
-                'predicted_price': buy_order_predicted,
-                'crash_pct': buy_order_change_pct,
-                'confidence': buy_order_confidence * 100,
-                'crash_severity': crash_severity,
-                'estimated_reversal_hours': estimated_reversal_hours,
-                'spread_direction': spread_direction,
-                'spread_confidence': spread_confidence * 100,
-                'recommendation': 'WAIT' if estimated_reversal_hours > 12 else 'BUY_DIP'
-            })
+        except (KeyError, TypeError, ZeroDivisionError) as e:
+            # Skip items with missing or invalid data
+            continue
     
     # Sort by crash severity (most severe first)
     crash_items.sort(key=lambda x: x['crash_severity'], reverse=True)
     
     return crash_items[:top_n]
 
-
-
 # ------------------- Example Usage -------------------
 
 if __name__ == '__main__':
-    number = 3  
+    number = 200
     print("\n" + "="*70)
     print(f"OPTIMIZED TRAINING: {number} ITEMS FOR 90%+ F1 SCORE")
     print("="*70)
     
     # Fetch all item IDs
-    url = "https://sky.coflnet.com/api/items/bazaar/tags"
-    item_ids = requests.get(url).json()
-
-    print(f"\nTraining on {number} items from {len(item_ids)} available items...")
-    train_three_model_system("BOOSTER_COOKIE")
+    with open('sorted_by_demand_items.json', 'r') as f:
+        item_ids = json.load(f)
+    item_ids = item_ids[:number]
+    for entry in item_ids:
+        print(f"Training model for {entry['item_id']}")
+        train_three_model_system(entry['item_id'], horizon_bars=3, threshold=0.001)
