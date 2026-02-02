@@ -15,6 +15,7 @@ from data_utils import load_or_fetch_item_data, parse_timestamp
 from mayor_utils import get_mayor_perks, match_mayor_perks
 from datetime import datetime, timedelta, timezone
 import os
+
 warnings.filterwarnings("ignore")
 
 
@@ -28,12 +29,9 @@ def clean_dump(obj, path):
 
     os.replace(tmp, path)
 
-def tukey_clip(y, k=3):
-    q1 = np.percentile(y, 25)
-    q3 = np.percentile(y, 75)
-    iqr = q3 - q1
-    lower = q1 - k * iqr
-    upper = q3 + k * iqr
+def clip_extreme_outliers(y, lower_pct=0.0001, upper_pct=0.9999):
+    lower = np.percentile(y, lower_pct*100)
+    upper = np.percentile(y, upper_pct*100)
     return np.clip(y, lower, upper)
 
 # =========================================================
@@ -123,68 +121,66 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
 # ENTRY-ONLY LABELING (Regression Target)
 # =========================================================
 
-def build_entry_targets(df, horizon_minutes=1440, tax=0.0125):
+def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
     df = df.copy().sort_values('timestamp').reset_index(drop=True)
     
     timestamps = pd.to_datetime(df['timestamp']).astype('int64') // 10**9
     horizon_sec = horizon_minutes * 60
     
-    # compute immediate future return
-    future_return = (df['buy_price'].values * (1 - tax) - df['sell_price'].values) / (df['sell_price'].values + 1e-9)
-    df['future_return'] = future_return
-    
-    # initialize lists to store features
-    future_max_return = []
-    first_event_good = []
+    expected_return = []
+    profit_prob = []
+    time_to_first_up = []
+    time_to_first_down = []
     time_to_max = []
     time_to_min = []
     
-    timestamps_np = timestamps.values if isinstance(timestamps, pd.Series) else timestamps
+    ts = timestamps.values
+    buy_prices = df['buy_price'].values
+    sell_prices = df['sell_price'].values
     
-    # loop over each row
     for i in range(len(df)):
-        # select rows within the horizon
-        horizon_mask = (timestamps_np >= timestamps_np[i]) & (timestamps_np - timestamps_np[i] <= horizon_sec)
+        entry_price = sell_prices[i] 
+        initial_gap = buy_prices[i] * (1 - tax) - entry_price
+        horizon_mask = (ts >= ts[i]) & (ts - ts[i] <= horizon_sec)
         idxs_horizon = np.where(horizon_mask)[0]
-        returns_horizon = future_return[idxs_horizon]
         
-        if len(returns_horizon) == 0:
-            future_max_return.append(0.0)
-            first_event_good.append(0)
+        if len(idxs_horizon) == 0:
+            expected_return.append(0.0)
+            profit_prob.append(0.0)
+            time_to_first_up.append(0)
+            time_to_first_down.append(0)
             time_to_max.append(0)
             time_to_min.append(0)
             continue
         
-        # find max/min and their absolute indices
+        returns_horizon = (buy_prices[idxs_horizon] * (1 - tax) - entry_price) - initial_gap
+        returns_horizon /= (entry_price + 1e-9) 
+        
+        expected_return.append(np.median(returns_horizon))
+        profit_prob.append(np.mean(returns_horizon > 0))
+        
+        up_idxs = np.where(returns_horizon > 0)[0]
+        down_idxs = np.where(returns_horizon < 0)[0]
+        time_to_first_up.append(ts[idxs_horizon[up_idxs[0]]] - ts[i] if len(up_idxs) else 0)
+        time_to_first_down.append(ts[idxs_horizon[down_idxs[0]]] - ts[i] if len(down_idxs) else 0)
+        
         t_max_rel = np.argmax(returns_horizon)
         t_min_rel = np.argmin(returns_horizon)
         t_max = idxs_horizon[t_max_rel]
         t_min = idxs_horizon[t_min_rel]
-        
-        best_return = returns_horizon[t_max_rel]
-        worst_return = returns_horizon[t_min_rel]
-        
-        # risk-aware heuristic
-        if abs(worst_return) > best_return:
-            label = worst_return
-        elif t_max < t_min:
-            label = best_return
-        else:
-            label = worst_return
-        
-        future_max_return.append(label)
-        first_event_good.append(int(t_max < t_min))
-        time_to_max.append(timestamps_np[t_max] - timestamps_np[i])
-        time_to_min.append(timestamps_np[t_min] - timestamps_np[i])
+
+        time_to_max.append(ts[t_max] - ts[i])
+        time_to_min.append(ts[t_min] - ts[i])
     
-    # assign features to DataFrame
-    df['future_max_return'] = future_max_return
-    df['first_event_good'] = first_event_good
+    df['entry_label'] = expected_return
+    df['profit_prob'] = profit_prob
+    df['time_to_first_up'] = time_to_first_up
+    df['time_to_first_down'] = time_to_first_down
     df['time_to_max'] = time_to_max
     df['time_to_min'] = time_to_min
-    df['profitable_after_tax'] = (df['future_max_return'] > tax).astype(int)
-    
+
     return df
+
 
 # =========================================================
 # Cleaning
@@ -263,16 +259,15 @@ def train_model_system(item_id):
 
     df = build_entry_targets(df)
     
-    exclude = {'timestamp', 'future_max_return'}
+    exclude = {'timestamp', 'entry_label'}
     feature_cols = [c for c in df.columns if c not in exclude]
 
     X = clean_infinite_values(df[feature_cols].values)
-    y = df['future_max_return'].values
-
+    y = df['entry_label'].values
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    y = tukey_clip(y, k=3)
+    y = clip_extreme_outliers(y)
 
 
 
@@ -317,21 +312,20 @@ def test_train_model_system(item_id):
         return
 
     df = build_entry_targets(df)
-    split_idx = int(len(df) * 0.8)  # 80% for training, 20% for validation
+    split_idx = int(len(df) * 0.8)  
     train_df = df.iloc[:split_idx]
     val_df = df.iloc[split_idx:]
 
-    exclude = {'timestamp', 'future_max_return'}
+    exclude = {'timestamp', 'entry_label'}
     feature_cols = [c for c in df.columns if c not in exclude]
 
     X_train = clean_infinite_values(train_df[feature_cols].values)
-    y_train = train_df['future_max_return'].values
-
+    y_train = train_df['entry_label'].values
     X_val = clean_infinite_values(val_df[feature_cols].values)
-    y_val = val_df['future_max_return'].values
+    y_val = val_df['entry_label'].values
 
-    y_val = tukey_clip(y_val, k=3)
-    y_train = tukey_clip(y_train, k=3)
+    y_val = clip_extreme_outliers(y_val) 
+    y_train = clip_extreme_outliers(y_train)
 
 
     scaler = StandardScaler()
@@ -352,7 +346,7 @@ def test_train_model_system(item_id):
 
     print(f"y_train: positive={pos_train}, negative={neg_train}, zero={zero_train}")
 
-    # Same for y_val
+
     pos_val = np.sum(y_val > 0)
     neg_val = np.sum(y_val < 0)
     zero_val = np.sum(y_val == 0)
@@ -364,8 +358,6 @@ def test_train_model_system(item_id):
 
     print("X_val NaNs:", np.isnan(X_val).sum())
     print("X_val infs:", np.isinf(X_val).sum())
-
-
 
 
     study = optuna.create_study(direction="maximize")
@@ -401,13 +393,15 @@ def test_train_model_system(item_id):
     safe_sign_acc = np.mean((y_pred[mask] > 0) == (y_val[mask] > 0))
     print("Safe sign accuracy (true positive returns):", safe_sign_acc)
 
+
+
 # =========================================================
 # FUTURE PREDICTIONS (MULTI-TIMESTAMP)
 # =========================================================
 
 
 
-def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horizon_hours=24, step_minutes=5):
+def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horizon_hours=3, step_minutes=5):
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=horizon_hours)
     start_str = start.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
@@ -447,6 +441,60 @@ def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horiz
 
 
     return preds
+
+
+
+def fast_build_entry_targets(data, horizon_minutes=180, tax=0.0125):
+    rows = []
+    for entry in data:
+        try:
+            ts = parse_timestamp(entry['timestamp'])
+        except:
+            continue
+        
+        def f(k):
+            try:
+                return float(entry.get(k, 0))
+            except:
+                return 0.0
+        
+        row = {
+            'timestamp': ts,
+            'buy_price': f('buy'),
+            'sell_price': f('sell'),
+        }
+        rows.append(row)
+    
+    df = pd.DataFrame(rows)
+    timestamps = pd.to_datetime(df['timestamp']).astype('int64') // 10**9
+    horizon_sec = horizon_minutes * 60
+    expected_return = []
+    ts = timestamps.values
+    buy_prices = df['buy_price'].values
+    sell_prices = df['sell_price'].values
+    
+    for i in range(len(df)):
+        entry_price = sell_prices[i]
+        initial_gap = buy_prices[i] * (1 - tax) - entry_price
+        horizon_mask = (ts >= ts[i]) & (ts - ts[i] <= horizon_sec)
+        idxs_horizon = np.where(horizon_mask)[0]
+        
+        if len(idxs_horizon) == 0:
+            expected_return.append(0.0)
+            continue
+        
+        returns_horizon = (buy_prices[idxs_horizon] * (1 - tax) - entry_price) - initial_gap
+        returns_horizon /= (entry_price + 1e-9)
+        expected_return.append(np.median(returns_horizon))
+    
+    df['entry_label'] = expected_return
+    return df
+
+
+def test_datasets(item_id):
+    data = load_or_fetch_item_data(item_id)
+    df = fast_build_entry_targets(data)
+    df.to_csv(f"{item_id}_debug_data.csv", index=False)
 
 
 # =========================================================
@@ -500,10 +548,12 @@ def analyze_entries(pred_list, top_k=5):
 # =========================================================
 
 if __name__ == "__main__":
-    with open("bazaar_full_items_ids.json") as f:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(script_dir, "bazaar_full_items_ids.json")
+    with open(file_path) as f:
         items = json.load(f)
     for entry in items:
         print(f"Training {entry}")
-        train_model_system(entry)
+        test_datasets(entry)
 
 

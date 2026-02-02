@@ -1,4 +1,6 @@
 from datetime import datetime, timezone, timedelta
+from unicodedata import name
+import os
 
 epoch = datetime(2019, 6, 11, 17, 55, tzinfo=timezone.utc)
 time_to_new_year= timedelta(hours = 124)
@@ -80,7 +82,7 @@ def add_skyblock_time_features(df, ts_col="timestamp"):
 
 
     minutes = dt.dt.minute
-    
+
     minutes_to_prev_dark = (minutes - 55) % 60
     minutes_to_next_dark = (55 - minutes) % 60
 
@@ -149,20 +151,21 @@ def get_important_time_information(timestamp):
 
 
 # Testing Logic
-now = datetime.now(timezone.utc)
-print(now)
-current_year = find_skyblock_year(now)
-season_of_jerry_start, season_of_jerry_end, jerry_festival_start, jerry_festival_end, spooky_festival_start, spooky_festival_end, minutes_to_prev_jacob_contest, minutes_to_next_jacob_contest, time_delta_from_jacob_contest, minutes_to_prev_dark_auction, minutes_to_next_dark_auction, time_delta_from_dark_auction = get_important_time_information(now)
-print(f"Current SkyBlock Year: {current_year}")
-print(f"Season of Jerry Start: {season_of_jerry_start}")
-print(f"Season of Jerry End: {season_of_jerry_end}")
-print(f"Jerry Festival Start: {jerry_festival_start}")
-print(f"Jerry Festival End: {jerry_festival_end}")
-print(f"Spooky Festival Start: {spooky_festival_start}")
-print(f"Spooky Festival End: {spooky_festival_end}")
-print(f"Minutes to Previous Jacob Contest: {minutes_to_prev_jacob_contest}")
-print(f"Minutes to Next Jacob Contest: {minutes_to_next_jacob_contest}")
-print(f"Time Delta from Jacob Contest: {time_delta_from_jacob_contest}")
-print(f"Minutes to Previous Dark Auction: {minutes_to_prev_dark_auction}")
-print(f"Minutes to Next Dark Auction: {minutes_to_next_dark_auction}")
-print(f"Time Delta from Dark Auction: {time_delta_from_dark_auction}")
+if name == "__main__":
+    now = datetime.now(timezone.utc)
+    print(now)
+    current_year = find_skyblock_year(now)
+    season_of_jerry_start, season_of_jerry_end, jerry_festival_start, jerry_festival_end, spooky_festival_start, spooky_festival_end, minutes_to_prev_jacob_contest, minutes_to_next_jacob_contest, time_delta_from_jacob_contest, minutes_to_prev_dark_auction, minutes_to_next_dark_auction, time_delta_from_dark_auction = get_important_time_information(now)
+    print(f"Current SkyBlock Year: {current_year}")
+    print(f"Season of Jerry Start: {season_of_jerry_start}")
+    print(f"Season of Jerry End: {season_of_jerry_end}")
+    print(f"Jerry Festival Start: {jerry_festival_start}")
+    print(f"Jerry Festival End: {jerry_festival_end}")
+    print(f"Spooky Festival Start: {spooky_festival_start}")
+    print(f"Spooky Festival End: {spooky_festival_end}")
+    print(f"Minutes to Previous Jacob Contest: {minutes_to_prev_jacob_contest}")
+    print(f"Minutes to Next Jacob Contest: {minutes_to_next_jacob_contest}")
+    print(f"Time Delta from Jacob Contest: {time_delta_from_jacob_contest}")
+    print(f"Minutes to Previous Dark Auction: {minutes_to_prev_dark_auction}")
+    print(f"Minutes to Next Dark Auction: {minutes_to_next_dark_auction}")
+    print(f"Time Delta from Dark Auction: {time_delta_from_dark_auction}")
