@@ -384,7 +384,7 @@ def load_or_fetch_item_data(item_id, fetch_if_missing=True, update_with_new_data
         List of data entries, or None if file doesn't exist and fetch_if_missing is False
     """
     
-    json_dir = "/Users/samuelbraga/Json Files"
+    json_dir = os.path.join(os.path.dirname(__file__), "bazaar_data")
     
     # Try compressed file first (.pkl.gz is 5-10x smaller and faster)
     if use_compression:

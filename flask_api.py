@@ -23,7 +23,7 @@ from mayor_utils import get_mayor_perks
 app = Flask(__name__)
 CORS(app)
 
-SCRIPT_DIR = "/Users/samuelbraga/Model_Files"
+SCRIPT_DIR = os.path.join(os.path.dirname(__file__), "Model_Files")
 
 # Global artifacts
 models_dict = {}          # {item_id: trained_model}
@@ -77,7 +77,7 @@ def load_model_artifacts():
 
 def get_available_items():
     """Return item IDs with downloaded JSON data."""
-    json_dir = "/Users/samuelbraga/Model_Files"
+    json_dir = os.path.join(os.path.dirname(__file__), "Model_Files")
     items = []
     try:
         if os.path.exists(json_dir):

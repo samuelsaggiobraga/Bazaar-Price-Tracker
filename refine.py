@@ -1,8 +1,9 @@
 import json
 import gzip
 import pickle
+import os
 
-BIG_DIR = '/Users/samuelbraga/Json Files'
+BIG_DIR = os.path.join(os.path.dirname(__file__), 'bazaar_data')
 OUTPUT_FILE = 'bazaar_full_items_ids.json'
 
 with open('sorted_by_demand_items.json', 'r') as f:
