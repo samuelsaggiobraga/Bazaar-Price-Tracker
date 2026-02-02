@@ -12,6 +12,7 @@ __pycache__/
 
 # Project outputs
 Model_Files/
+bazaar_data/
 predictions_cache.json
 
 # Python packaging
