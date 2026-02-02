@@ -114,7 +114,7 @@ def _check_rate_limit():
         _requests_made += 1
 
 
-def find_oldest_available_data(item, fallback_date=datetime(2020, 9, 9, 0, 0, 0)):
+def find_oldest_available_data(item, fallback_date=datetime(2020, 9, 9, 0, 0, 0, tzinfo=timezone.utc)):
     """Find the oldest available data for an item by fetching full history.
     
     Args:
@@ -140,10 +140,13 @@ def find_oldest_available_data(item, fallback_date=datetime(2020, 9, 9, 0, 0, 0)
                 # Parse timestamp - handle Unix timestamp (int) or ISO string
                 ts = oldest_entry['timestamp']
                 if isinstance(ts, int):
-                    oldest_date = datetime.fromtimestamp(ts / 1000)  # Milliseconds to seconds
+                    oldest_date = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)  # ms to s
                 else:
                     # Try parsing as ISO string
                     oldest_date = parser.parse(str(ts))
+                    # Ensure timezone-aware
+                    if oldest_date.tzinfo is None:
+                        oldest_date = oldest_date.replace(tzinfo=timezone.utc)
                 
                 print(f"  ✓ Found data starting from: {oldest_date.strftime('%Y-%m-%d %H:%M:%S')}")
                 return oldest_date
@@ -274,7 +277,7 @@ def fetch_all_data(item, start=None, end=None, interval_seconds=82800, use_binar
     if start is None and use_binary_search:
         start = find_oldest_available_data(item)
     elif start is None:
-        start = datetime(2020, 9, 9, 0, 0, 0)  # Fallback: Skyblock Bazaar launch date
+        start = datetime(2020, 9, 9, 0, 0, 0, tzinfo=timezone.utc)  # fallback: bazaar launch date
     
     interval = timedelta(seconds=interval_seconds)
     
