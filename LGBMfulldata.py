@@ -16,6 +16,7 @@ from mayor_utils import get_mayor_perks, match_mayor_perks
 from datetime import datetime, timedelta, timezone
 from tqdm import trange
 import os
+
 warnings.filterwarnings("ignore")
 
 
@@ -39,12 +40,9 @@ def clean_dump(obj, path):
         os.remove(path)
     os.rename(tmp, path)
 
-def tukey_clip(y, k=3):
-    q1 = np.percentile(y, 25)
-    q3 = np.percentile(y, 75)
-    iqr = q3 - q1
-    lower = q1 - k * iqr
-    upper = q3 + k * iqr
+def clip_extreme_outliers(y, lower_pct=0.0001, upper_pct=0.9999):
+    lower = np.percentile(y, lower_pct*100)
+    upper = np.percentile(y, upper_pct*100)
     return np.clip(y, lower, upper)
 
 # =========================================================
@@ -134,7 +132,7 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
 # ENTRY-ONLY LABELING (Regression Target)
 # =========================================================
 
-def build_entry_targets(df, horizon_minutes=1440, tax=0.0125):
+def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
     df = df.copy().sort_values('timestamp').reset_index(drop=True)
     timestamps = pd.to_datetime(df['timestamp']).astype('int64') // 10**9
     timestamps = timestamps.values  # Pure numpy for faster indexing
@@ -188,6 +186,12 @@ def build_entry_targets(df, horizon_minutes=1440, tax=0.0125):
     df['profitable_after_tax'] = (df['future_max_return'] > tax).astype(int)
     return df
 
+def build_entry_targets_fast(df, item_id):
+    csv_directory = os.path.expanduser("~/Bazaar_Mod/Bazaar Price Tracker/csv files")
+    df_labels = pd.read_csv(os.path.join(csv_directory, f"{item_id}_debug_data.csv"), parse_dates=['timestamp'])
+    df_labels = df_labels[["timestamp", "entry_label"]]
+    df = df.merge(df_labels, on='timestamp', how='left')
+    return df
 # =========================================================
 # Cleaning
 # =========================================================
@@ -265,7 +269,7 @@ def train_model_system(item_id):
 
     df = build_entry_targets(df)
     
-    exclude = {'timestamp', 'future_max_return'}
+    exclude = {'timestamp', 'entry_label'}
     feature_cols = [c for c in df.columns if c not in exclude]
 
     X = clean_infinite_values(df[feature_cols].values)
@@ -283,7 +287,7 @@ def train_model_system(item_id):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    y = tukey_clip(y, k=3)
+    y = clip_extreme_outliers(y)
 
 
 
@@ -318,7 +322,7 @@ def train_model_system(item_id):
 # =========================================================
 
 
-def test_train_model_system(item_id):
+def test_train_model_system(item_id, lower = 0.001, upper = 0.999):
     mayor_data = get_mayor_perks()
     data = load_or_fetch_item_data(item_id)
 
@@ -327,22 +331,21 @@ def test_train_model_system(item_id):
         print(f"{item_id}: not enough data")
         return
 
-    df = build_entry_targets(df)
-    split_idx = int(len(df) * 0.8)  # 80% for training, 20% for validation
+    df = build_entry_targets_fast(df)
+    split_idx = int(len(df) * 0.8)  
     train_df = df.iloc[:split_idx]
     val_df = df.iloc[split_idx:]
 
-    exclude = {'timestamp', 'future_max_return'}
+    exclude = {'timestamp', 'entry_label'}
     feature_cols = [c for c in df.columns if c not in exclude]
 
     X_train = clean_infinite_values(train_df[feature_cols].values)
-    y_train = train_df['future_max_return'].values
-
+    y_train = train_df['entry_label'].values
     X_val = clean_infinite_values(val_df[feature_cols].values)
-    y_val = val_df['future_max_return'].values
+    y_val = val_df['entry_label'].values
 
-    y_val = tukey_clip(y_val, k=3)
-    y_train = tukey_clip(y_train, k=3)
+    y_val = clip_extreme_outliers(y_val, lower_pct=lower, upper_pct=upper) 
+    y_train = clip_extreme_outliers(y_train, lower_pct=lower, upper_pct=upper)
 
 
     scaler = StandardScaler()
@@ -363,7 +366,7 @@ def test_train_model_system(item_id):
 
     print(f"y_train: positive={pos_train}, negative={neg_train}, zero={zero_train}")
 
-    # Same for y_val
+
     pos_val = np.sum(y_val > 0)
     neg_val = np.sum(y_val < 0)
     zero_val = np.sum(y_val == 0)
@@ -375,8 +378,6 @@ def test_train_model_system(item_id):
 
     print("X_val NaNs:", np.isnan(X_val).sum())
     print("X_val infs:", np.isinf(X_val).sum())
-
-
 
 
     study = optuna.create_study(direction="maximize")
@@ -412,13 +413,15 @@ def test_train_model_system(item_id):
     safe_sign_acc = np.mean((y_pred[mask] > 0) == (y_val[mask] > 0))
     print("Safe sign accuracy (true positive returns):", safe_sign_acc)
 
+
+
 # =========================================================
 # FUTURE PREDICTIONS (MULTI-TIMESTAMP)
 # =========================================================
 
 
 
-def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horizon_hours=24, step_minutes=5):
+def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horizon_hours=3, step_minutes=5):
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=horizon_hours)
     start_str = start.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
@@ -473,6 +476,60 @@ def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horiz
     return preds
 
 
+
+def fast_build_entry_targets(data, horizon_minutes=180, tax=0.0125):
+    rows = []
+    for entry in data:
+        try:
+            ts = parse_timestamp(entry['timestamp'])
+        except:
+            continue
+        
+        def f(k):
+            try:
+                return float(entry.get(k, 0))
+            except:
+                return 0.0
+        
+        row = {
+            'timestamp': ts,
+            'buy_price': f('buy'),
+            'sell_price': f('sell'),
+        }
+        rows.append(row)
+    
+    df = pd.DataFrame(rows)
+    timestamps = pd.to_datetime(df['timestamp']).astype('int64') // 10**9
+    horizon_sec = horizon_minutes * 60
+    expected_return = []
+    ts = timestamps.values
+    buy_prices = df['buy_price'].values
+    sell_prices = df['sell_price'].values
+    
+    for i in range(len(df)):
+        entry_price = sell_prices[i]
+        initial_gap = buy_prices[i] * (1 - tax) - entry_price
+        horizon_mask = (ts >= ts[i]) & (ts - ts[i] <= horizon_sec)
+        idxs_horizon = np.where(horizon_mask)[0]
+        
+        if len(idxs_horizon) == 0:
+            expected_return.append(0.0)
+            continue
+        
+        returns_horizon = (buy_prices[idxs_horizon] * (1 - tax) - entry_price) - initial_gap
+        returns_horizon /= (entry_price + 1e-9)
+        expected_return.append(np.median(returns_horizon))
+    
+    df['entry_label'] = expected_return
+    return df
+
+
+def test_datasets(item_id):
+    data = load_or_fetch_item_data(item_id)
+    df = fast_build_entry_targets(data)
+    df.to_csv(f"{item_id}_debug_data.csv", index=False)
+
+
 # =========================================================
 # ANALYZE TOP PREDICTIONS
 # =========================================================
@@ -524,10 +581,16 @@ def analyze_entries(pred_list, top_k=5):
 # =========================================================
 
 if __name__ == "__main__":
-    with open("bazaar_full_items_ids.json") as f:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(script_dir, "bazaar_full_items_ids.json")
+    with open(file_path) as f:
         items = json.load(f)
     for entry in items:
-        print(f"Training {entry}")
-        train_model_system(entry)
+        if entry == "BOOSTER_COOKIE":
+            test_train_model_system(entry, lower=0.0001, upper=1.0)
+        elif entry == "CONTROL_SWITCH" or entry == "ELECTRON_TRANSMITTER" or entry == "FTX_3070":
+            test_train_model_system(entry, lower=0.01, upper=0.99)
+        elif entry == "FLAWLESS_SAPPHIRE_GEM":
+            test_train_model_system(entry)
 
 
