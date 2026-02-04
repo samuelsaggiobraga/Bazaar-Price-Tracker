@@ -420,6 +420,15 @@ def test_train_model_system(item_id, lower = 0.001, upper = 0.999):
         print(f"✗ CSV file for {item_id} does not exist")
         df = generate_csv_files(item_id)
 
+    tested_metrics_dict = {
+        "rmse": None,
+        "mae": None,
+        "r2": None,
+        "sign_accuracy": None,
+        "percent_error_stats": None,
+        "safe_sign_accuracy": None
+    }
+
     split_idx = int(len(df) * 0.8)  
     train_df = df.iloc[:split_idx]
     val_df = df.iloc[split_idx:]
@@ -499,6 +508,16 @@ def test_train_model_system(item_id, lower = 0.001, upper = 0.999):
 
     mask = y_val > 0.1
     safe_sign_acc = np.mean((y_pred[mask] > 0) == (y_val[mask] > 0))
+
+    tested_metrics_dict["rmse"] = rmse
+    tested_metrics_dict["mae"] = mae
+    tested_metrics_dict["r2"] = r2
+    tested_metrics_dict["sign_accuracy"] = accuracy
+    tested_metrics_dict["percent_error_stats"] = stats
+    tested_metrics_dict["safe_sign_accuracy"] = safe_sign_acc
+
+    json.dump(tested_metrics_dict, open(os.path.join(project_root, "Model_Files", f"{item_id}_test_train_metrics.json"), "w"), indent=4)
+    
     print("Safe sign accuracy (true positive returns):", safe_sign_acc)
 
 
@@ -617,11 +636,7 @@ if __name__ == "__main__":
     file_path = os.path.join(script_dir, "bazaar_full_items_ids.json")
     with open(file_path) as f:
         items = json.load(f)
-
-    for entry in items:
-        csv_path = os.path.join(csv_directory, f"{entry}_debug_data.csv")
-        generate_csv_files(entry)
-"""
+        
     for entry in items:
         if entry == "BOOSTER_COOKIE":
             test_train_model_system(entry, lower=0.0001, upper=1.0)
@@ -629,5 +644,3 @@ if __name__ == "__main__":
             test_train_model_system(entry, lower=0.01, upper=0.99)
         elif entry == "FLAWLESS_SAPPHIRE_GEM":
             test_train_model_system(entry)
-"""
-
