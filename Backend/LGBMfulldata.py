@@ -262,7 +262,7 @@ def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
     
     return df
 
-def load_entry_targets(df, item_id):
+def load_entry_targets(item_id):
     csv_directory = os.path.join(project_root, "csv files")
     df = pd.read_csv(os.path.join(csv_directory, f"{item_id}_debug_data.csv"), parse_dates=['timestamp'])
     return df
@@ -336,21 +336,24 @@ def percent_error_stats(y_true, y_pred, eps=1e-9):
 # =========================================================
 
 def train_model_system(item_id, lower = 0.001, upper = 0.999):
-    mayor_data = get_mayor_perks()
-    data = load_or_fetch_item_data(item_id)
-    
-    df = prepare_dataframe_from_raw(data, mayor_data)
-    if len(df) < 50:
-        print(f"{item_id}: not enough data")
-        return
-
-    df = build_entry_targets(df)
+    if os.path.exists(os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")):
+        print(f"✓ CSV file for {item_id} already exists")
+        df = load_entry_targets(item_id)
+    else:
+        print(f"✗ CSV file for {item_id} does not exist")
+        mayor_data = get_mayor_perks()
+        data = load_or_fetch_item_data(item_id)
+        df = prepare_dataframe_from_raw(data, mayor_data)
+        df = add_skyblock_time_features(df)
+        df = build_lagged_features(df)
+        df = add_time_features(df)
+        df = build_entry_targets(df)
     
     exclude = {'timestamp', 'entry_label'}
     feature_cols = [c for c in df.columns if c not in exclude]
 
     X = clean_infinite_values(df[feature_cols].values)
-    y = df['future_max_return'].values
+    y = df['entry_label'].values
 
     # Quick label diagnostics
     try:
@@ -398,15 +401,19 @@ def train_model_system(item_id, lower = 0.001, upper = 0.999):
 
 
 def test_train_model_system(item_id, lower = 0.001, upper = 0.999):
-    mayor_data = get_mayor_perks()
-    data = load_or_fetch_item_data(item_id)
+    if os.path.exists(os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")):
+        print(f"✓ CSV file for {item_id} already exists")
+        df = load_entry_targets(item_id)
+    else:
+        print(f"✗ CSV file for {item_id} does not exist")
+        mayor_data = get_mayor_perks()
+        data = load_or_fetch_item_data(item_id)
+        df = prepare_dataframe_from_raw(data, mayor_data)
+        df = add_skyblock_time_features(df)
+        df = build_lagged_features(df)
+        df = add_time_features(df)
+        df = build_entry_targets(df)
 
-    df = prepare_dataframe_from_raw(data, mayor_data)
-    if len(df) < 50:
-        print(f"{item_id}: not enough data")
-        return
-
-    df = load_entry_targets(df, item_id)
     split_idx = int(len(df) * 0.8)  
     train_df = df.iloc[:split_idx]
     val_df = df.iloc[split_idx:]
@@ -599,8 +606,9 @@ def analyze_entries(pred_list, top_k=5):
 # =========================================================
 
 def generate_csv_files(item_id):
+    mayor_data = get_mayor_perks()
     data = load_or_fetch_item_data(item_id)
-    df = prepare_dataframe_from_raw(data)
+    df = prepare_dataframe_from_raw(data, mayor_data)
     df = add_skyblock_time_features(df)
     df = build_lagged_features(df)
     df = add_time_features(df)
@@ -626,19 +634,17 @@ if __name__ == "__main__":
     file_path = os.path.join(script_dir, "bazaar_full_items_ids.json")
     with open(file_path) as f:
         items = json.load(f)
+
     for entry in items:
         csv_path = os.path.join(csv_directory, f"{entry}_debug_data.csv")
-        if not os.path.exists(csv_path):
-            generate_csv_files(entry)
-
-
-        """
+        generate_csv_files(entry)
+"""
+    for entry in items:
         if entry == "BOOSTER_COOKIE":
             test_train_model_system(entry, lower=0.0001, upper=1.0)
         elif entry == "CONTROL_SWITCH" or entry == "ELECTRON_TRANSMITTER" or entry == "FTX_3070":
             test_train_model_system(entry, lower=0.01, upper=0.99)
         elif entry == "FLAWLESS_SAPPHIRE_GEM":
             test_train_model_system(entry)
-        """
-
+"""
 
