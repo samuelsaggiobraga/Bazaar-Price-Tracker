@@ -19,7 +19,6 @@ from sklearn.metrics import r2_score
 from Utils.data_utils import load_or_fetch_item_data, parse_timestamp
 from Utils.mayor_utils import get_mayor_perks, match_mayor_perks
 from datetime import datetime, timedelta, timezone
-from tqdm import trange
 
 warnings.filterwarnings("ignore")
 

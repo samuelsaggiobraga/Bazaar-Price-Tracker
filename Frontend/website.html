@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BAZAAR ENTRY SIGNALS</title>
+    <link href="https://fonts.googleapis.com/css2?family=VT323&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0d0d0d;
+            --bg-secondary: #161616;
+            --bg-tertiary: #1c1c1c;
+            --text-primary: #e0e0e0;
+            --text-secondary: #b0b0b0;
+            --text-dim: #666666;
+            --accent: #4a9eff;
+            --accent-green: #00cc66;
+            --accent-red: #ff4444;
+            --border: #2a2a2a;
+        }
+
+        body {
+            background: #0a0a0a;
+            color: var(--text-primary);
+            font-family: 'VT323', monospace;
+            font-size: 24px;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+
+
+
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 60px;
+            position: relative;
+        }
+
+        .title {
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 900;
+            font-size: 56px;
+            letter-spacing: 8px;
+            text-transform: uppercase;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: var(--text-dim);
+            font-size: 20px;
+            letter-spacing: 4px;
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            padding: 15px 25px;
+            margin-bottom: 30px;
+            border-radius: 0;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-label {
+            color: var(--text-dim);
+            font-size: 18px;
+        }
+
+        .status-value {
+            color: var(--accent);
+            font-weight: bold;
+            font-size: 20px;
+        }
+
+        .pulse-dot {
+            width: 12px;
+            height: 12px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 12px 30px;
+            font-family: 'VT323', monospace;
+            font-size: 22px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            transition: all 0.15s;
+            position: relative;
+        }
+
+        .btn:hover {
+            background: var(--bg-secondary);
+            border-color: var(--accent);
+        }
+
+        .btn:active {
+            background: var(--bg-primary);
+        }
+
+        input, select {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 12px 20px;
+            font-family: 'VT323', monospace;
+            font-size: 20px;
+            outline: none;
+        }
+
+        input:focus, select:focus {
+            border-color: var(--accent);
+            background: var(--bg-tertiary);
+        }
+
+        .table-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        .table-header {
+            background: var(--bg-tertiary);
+            padding: 20px 25px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .table-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        thead {
+            background: var(--bg-tertiary);
+        }
+
+        th {
+            padding: 18px 25px;
+            text-align: left;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            font-size: 20px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th:first-child {
+            color: var(--text-dim);
+            width: 80px;
+        }
+
+        th:nth-child(2) {
+            color: var(--text-secondary);
+        }
+
+        th:nth-child(3) {
+            color: var(--text-secondary);
+        }
+
+        th:nth-child(4) {
+            color: var(--text-secondary);
+        }
+
+        tbody tr {
+            border-bottom: 1px solid var(--border);
+            transition: background 0.1s;
+        }
+
+        tbody tr:hover {
+            background: rgba(74, 158, 255, 0.05);
+        }
+
+        td {
+            padding: 18px 25px;
+            font-size: 22px;
+        }
+
+        td:first-child {
+            color: var(--text-dim);
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+        }
+
+        .item-name {
+            color: var(--text-primary);
+        }
+
+        .timestamp {
+            color: var(--text-secondary);
+            font-family: 'VT323', monospace;
+        }
+
+        .score {
+            color: var(--text-secondary);
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+        }
+
+        .score.high {
+            color: var(--accent-green);
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 60px;
+            padding: 30px;
+            color: var(--text-dim);
+            font-size: 18px;
+            letter-spacing: 2px;
+            border-top: 1px solid var(--border);
+        }
+
+        .footer-text {
+            font-family: 'Orbitron', sans-serif;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            font-size: 32px;
+            color: var(--text-secondary);
+        }
+
+        .error {
+            background: rgba(100, 30, 30, 0.2);
+            border: 1px solid var(--accent-red);
+            color: #ff8888;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+            font-size: 20px;
+        }
+
+        .price-info {
+            display: flex;
+            gap: 20px;
+            font-size: 18px;
+        }
+
+        .price-label {
+            color: var(--text-dim);
+        }
+
+        .price-value {
+            color: var(--accent);
+            font-weight: bold;
+        }
+
+        .navigation {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 30px;
+            padding: 20px 0;
+        }
+
+        .nav-btn {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 10px 25px;
+            font-family: 'VT323', monospace;
+            font-size: 28px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .nav-btn:hover:not(:disabled) {
+            border-color: var(--accent);
+            background: var(--bg-secondary);
+        }
+
+        .nav-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .page-info {
+            color: var(--text-dim);
+            font-size: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .title {
+                font-size: 36px;
+                letter-spacing: 4px;
+            }
+
+            .status-bar {
+                flex-direction: column;
+                gap: 15px;
+            }
+
+            table {
+                font-size: 18px;
+            }
+
+            th, td {
+                padding: 12px 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    
+    <div class="container">
+        <header>
+            <h1 class="title">BAZAAR ENTRY SIGNALS</h1>
+            <p class="subtitle">REAL-TIME MARKET PREDICTION SYSTEM</p>
+        </header>
+
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="pulse-dot"></div>
+                <span class="status-label">STATUS:</span>
+                <span class="status-value" id="server-status">CONNECTING...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">ITEMS TRACKED:</span>
+                <span class="status-value" id="items-count">0</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">LAST UPDATE:</span>
+                <span class="status-value" id="last-update">--:--:--</span>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button class="btn" id="refresh-btn" onclick="loadPredictions()">
+                <span style="position: relative; z-index: 1;">⟳ REFRESH</span>
+            </button>
+            <input type="number" id="limit-input" placeholder="Limit (default: 100)" min="1" max="500" value="100">
+            <input type="number" id="min-score-input" placeholder="Min Score (0.0)" step="0.01" value="0">
+            <select id="sort-select">
+                <option value="time">Sort by Time</option>
+                <option value="score">Sort by Score</option>
+            </select>
+        </div>
+
+        <div class="table-container">
+            <div class="table-header">
+                <h2 class="table-title">PREDICTED ENTRY OPPORTUNITIES</h2>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>ITEM</th>
+                        <th>ENTRY TIME</th>
+                        <th>SCORE</th>
+                    </tr>
+                </thead>
+                <tbody id="predictions-table">
+                    <tr>
+                        <td colspan="4" class="loading">INITIALIZING SYSTEM...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="navigation">
+            <button class="nav-btn" id="prev-btn" onclick="changePage(-1)" disabled>◄</button>
+            <span class="page-info">PAGE <span id="current-page">1</span></span>
+            <button class="nav-btn" id="next-btn" onclick="changePage(1)">►</button>
+        </div>
+
+        <footer>
+            <p class="footer-text">POWERED BY LGBM ENTRY MODEL</p>
+        </footer>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5001';
+        let currentData = [];
+        let currentPage = 1;
+        const itemsPerPage = 20;
+
+        async function checkHealth() {
+            try {
+                const response = await fetch(`${API_URL}/health`);
+                const data = await response.json();
+                
+                document.getElementById('server-status').textContent = 
+                    data.model_trained ? 'ONLINE' : 'INITIALIZING';
+                document.getElementById('server-status').style.color = 
+                    data.model_trained ? '#00cc66' : '#ffaa00';
+                
+                return data.model_trained;
+            } catch (error) {
+                document.getElementById('server-status').textContent = 'OFFLINE';
+                document.getElementById('server-status').style.color = '#ff0000';
+                return false;
+            }
+        }
+
+        async function loadPredictions() {
+            const tableBody = document.getElementById('predictions-table');
+            const limit = document.getElementById('limit-input').value || 100;
+            const minScore = document.getElementById('min-score-input').value || 0;
+
+            tableBody.innerHTML = '<tr><td colspan="4" class="loading">LOADING DATA...</td></tr>';
+
+            try {
+                const response = await fetch(`${API_URL}/predictions?limit=${limit}&min_score=${minScore}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                currentData = data.items || [];
+                document.getElementById('items-count').textContent = data.total || 0;
+                
+                const now = new Date();
+                document.getElementById('last-update').textContent = 
+                    now.toLocaleTimeString('en-US', { hour12: false });
+
+                sortAndDisplayData();
+
+            } catch (error) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="4" class="error">
+                            ERROR: ${error.message}
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        function sortAndDisplayData() {
+            const sortBy = document.getElementById('sort-select').value;
+            
+            if (sortBy === 'score') {
+                currentData.sort((a, b) => b.entry_score - a.entry_score);
+            } else {
+                currentData.sort((a, b) => a.delta_minutes - b.delta_minutes);
+            }
+
+            currentPage = 1;
+            displayPage();
+        }
+
+        function displayPage() {
+            const tableBody = document.getElementById('predictions-table');
+            const start = (currentPage - 1) * itemsPerPage;
+            const end = start + itemsPerPage;
+            const pageData = currentData.slice(start, end);
+
+            if (pageData.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="4" class="loading">NO DATA AVAILABLE</td></tr>';
+                return;
+            }
+
+            tableBody.innerHTML = pageData.map((item, index) => {
+                const globalIndex = start + index + 1;
+                const timestamp = new Date(item.timestamp).toLocaleString('en-US', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false
+                }).replace(',', '');
+
+                const score = parseFloat(item.entry_score).toFixed(4);
+                const scoreClass = score > 0.1 ? 'high' : '';
+
+                return `
+                    <tr>
+                        <td>#${globalIndex}</td>
+                        <td class="item-name">${formatItemName(item.item_id)}</td>
+                        <td class="timestamp">${timestamp}</td>
+                        <td class="score ${scoreClass}">${score}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            updatePagination();
+        }
+
+        function formatItemName(itemId) {
+            return itemId.replace(/_/g, ' ').toUpperCase();
+        }
+
+        function updatePagination() {
+            const totalPages = Math.ceil(currentData.length / itemsPerPage);
+            document.getElementById('current-page').textContent = currentPage;
+            document.getElementById('prev-btn').disabled = currentPage === 1;
+            document.getElementById('next-btn').disabled = currentPage >= totalPages;
+        }
+
+        function changePage(direction) {
+            const totalPages = Math.ceil(currentData.length / itemsPerPage);
+            const newPage = currentPage + direction;
+            
+            if (newPage >= 1 && newPage <= totalPages) {
+                currentPage = newPage;
+                displayPage();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        }
+
+        document.getElementById('sort-select').addEventListener('change', sortAndDisplayData);
+
+        // Auto-refresh every 30 seconds
+        setInterval(loadPredictions, 30000);
+
+        // Initial load
+        (async () => {
+            const isReady = await checkHealth();
+            if (isReady) {
+                await loadPredictions();
+            } else {
+                setTimeout(loadPredictions, 3000);
+            }
+        })();
+    </script>
+</body>
+</html>
