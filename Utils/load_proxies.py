@@ -1,4 +1,4 @@
-from data_utils import configure_proxy_pool
+from Utils.data_utils import configure_proxy_pool
 
 def parse_proxy_line(line):
     """

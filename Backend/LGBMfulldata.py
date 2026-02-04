@@ -1,3 +1,10 @@
+import os
+import sys
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 import optuna
 import json
 import numpy as np
@@ -6,16 +13,14 @@ import joblib
 import lightgbm as lgb
 import requests
 import warnings
-from event_utils import add_skyblock_time_features
+from Utils.event_utils import add_skyblock_time_features
 from sklearn.preprocessing import StandardScaler
-from matplotlib import pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score
-from data_utils import load_or_fetch_item_data, parse_timestamp
-from mayor_utils import get_mayor_perks, match_mayor_perks
+from Utils.data_utils import load_or_fetch_item_data, parse_timestamp
+from Utils.mayor_utils import get_mayor_perks, match_mayor_perks
 from datetime import datetime, timedelta, timezone
 from tqdm import trange
-import os
 
 warnings.filterwarnings("ignore")
 
@@ -138,59 +143,129 @@ def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
     timestamps = timestamps.values  # Pure numpy for faster indexing
     horizon_sec = horizon_minutes * 60
     
-    # Compute immediate future return
-    future_return = (df['buy_price'].values * (1 - tax) - df['sell_price'].values) / (df['sell_price'].values + 1e-9)
-    
+    ts = timestamps.values
+    buy_prices = df['buy_price'].values
+    sell_prices = df['sell_price'].values
     n = len(df)
-    future_max_return = np.zeros(n)
-    first_event_good = np.zeros(n, dtype=int)
+    
+    # Pre-allocate all target arrays
+    expected_return = np.zeros(n)
+    profit_prob = np.zeros(n)
+    time_to_first_up = np.zeros(n)
+    time_to_first_down = np.zeros(n)
     time_to_max = np.zeros(n)
     time_to_min = np.zeros(n)
+    max_profit_list = np.zeros(n)
+    max_loss_list = np.zeros(n)
+    risk_reward_list = np.zeros(n)
+    win_rate_1pct_list = np.zeros(n)
+    win_rate_2pct_list = np.zeros(n)
+    mae_list = np.zeros(n)
+    mfe_list = np.zeros(n)
+    profitable_1pct_list = np.zeros(n, dtype=int)
+    profitable_2pct_list = np.zeros(n, dtype=int)
     
-    # Sliding window: O(n) instead of O(n²)
+    # Pre-compute all returns once
+    initial_gaps = buy_prices * (1 - tax) - sell_prices
+    
+    # O(n) sliding window approach
     j = 0
-    for i in trange(n, desc="Building targets", leave=False):
-        # Advance right pointer until outside horizon
-        while j < n and timestamps[j] - timestamps[i] <= horizon_sec:
+    for i in range(n):
+        entry_price = sell_prices[i]
+        initial_gap = initial_gaps[i]
+        
+        # Advance right pointer to end of horizon
+        while j < n and ts[j] - ts[i] <= horizon_sec:
             j += 1
         
-        window = future_return[i:j]
-        if len(window) == 0:
+        # Window is [i, j)
+        if j <= i:
             continue
+            
+        # Compute returns for this window
+        returns_horizon = (buy_prices[i:j] * (1 - tax) - entry_price) - initial_gap
+        returns_horizon = returns_horizon / (entry_price + 1e-9)
         
-        t_max_rel = np.argmax(window)
-        t_min_rel = np.argmin(window)
-        t_max = i + t_max_rel
-        t_min = i + t_min_rel
+        # Expected return and profit probability
+        expected_return[i] = np.median(returns_horizon)
+        profit_prob[i] = np.mean(returns_horizon > 0)
         
-        best_return = window[t_max_rel]
-        worst_return = window[t_min_rel]
+        # Time to first up/down
+        up_idxs = np.where(returns_horizon > 0)[0]
+        down_idxs = np.where(returns_horizon < 0)[0]
+        if len(up_idxs) > 0:
+            time_to_first_up[i] = ts[i + up_idxs[0]] - ts[i]
+        if len(down_idxs) > 0:
+            time_to_first_down[i] = ts[i + down_idxs[0]] - ts[i]
         
-        # Risk-aware heuristic
-        if abs(worst_return) > best_return:
-            label = worst_return
-        elif t_max < t_min:
-            label = best_return
-        else:
-            label = worst_return
+        # Max/min and their timing
+        t_max_rel = np.argmax(returns_horizon)
+        t_min_rel = np.argmin(returns_horizon)
         
-        future_max_return[i] = label
-        first_event_good[i] = int(t_max < t_min)
-        time_to_max[i] = timestamps[t_max] - timestamps[i]
-        time_to_min[i] = timestamps[t_min] - timestamps[i]
+        time_to_max[i] = ts[i + t_max_rel] - ts[i]
+        time_to_min[i] = ts[i + t_min_rel] - ts[i]
+        
+        max_profit = returns_horizon[t_max_rel]
+        max_loss = returns_horizon[t_min_rel]
+        
+        max_profit_list[i] = max_profit
+        max_loss_list[i] = max_loss
+        risk_reward_list[i] = max_profit / abs(max_loss) if max_loss < 0 else max_profit
+        
+        # Win rates
+        win_rate_1pct_list[i] = np.mean(returns_horizon >= 0.01)
+        win_rate_2pct_list[i] = np.mean(returns_horizon >= 0.02)
+        
+        # MAE (Max Adverse Excursion) - worst drawdown before peak
+        mae_list[i] = np.min(returns_horizon[:t_max_rel + 1]) if t_max_rel > 0 else 0.0
+        
+        # MFE (Max Favorable Excursion)
+        mfe_list[i] = max_profit
+        
+        # Profitability flags
+        profitable_1pct_list[i] = int(max_profit >= 0.01)
+        profitable_2pct_list[i] = int(max_profit >= 0.02)
     
-    df['future_max_return'] = future_max_return
-    df['first_event_good'] = first_event_good
+    # Feature engineering (vectorized)
+    returns_last_5min = df['buy_price'].pct_change(periods=5)
+    returns_last_15min = df['buy_price'].pct_change(periods=15)
+    price_vs_5min_high = df['buy_price'] / df['buy_price'].rolling(5).max()
+    price_vs_5min_low = df['buy_price'] / df['buy_price'].rolling(5).min()
+    price_volatility = df['buy_price'].rolling(20).std() / df['buy_price'].rolling(20).mean()
+    spread_volatility = (df['buy_price'] - df['sell_price']).rolling(20).std()
+    spread_pct = (df['buy_price'] - df['sell_price']) / df['sell_price']
+    spread_momentum = spread_pct.diff()
+    
+    # Assign all computed values
+    df['returns_last_5min'] = returns_last_5min
+    df['returns_last_15min'] = returns_last_15min
+    df['price_vs_5min_high'] = price_vs_5min_high
+    df['price_vs_5min_low'] = price_vs_5min_low
+    df['price_volatility'] = price_volatility
+    df['spread_volatility'] = spread_volatility
+    df['spread_pct'] = spread_pct
+    df['spread_momentum'] = spread_momentum
+    df['max_profit'] = max_profit_list
+    df['max_loss'] = max_loss_list
+    df['risk_reward'] = risk_reward_list
+    df['win_rate_1pct'] = win_rate_1pct_list
+    df['win_rate_2pct'] = win_rate_2pct_list
+    df['mae'] = mae_list
+    df['mfe'] = mfe_list
+    df['profitable_1pct'] = profitable_1pct_list
+    df['profitable_2pct'] = profitable_2pct_list
+    df['entry_label'] = expected_return
+    df['profit_prob'] = profit_prob
+    df['time_to_first_up'] = time_to_first_up
+    df['time_to_first_down'] = time_to_first_down
     df['time_to_max'] = time_to_max
     df['time_to_min'] = time_to_min
-    df['profitable_after_tax'] = (df['future_max_return'] > tax).astype(int)
+    
     return df
 
-def build_entry_targets_fast(df, item_id):
-    csv_directory = os.path.expanduser("~/Bazaar_Mod/Bazaar Price Tracker/csv files")
-    df_labels = pd.read_csv(os.path.join(csv_directory, f"{item_id}_debug_data.csv"), parse_dates=['timestamp'])
-    df_labels = df_labels[["timestamp", "entry_label"]]
-    df = df.merge(df_labels, on='timestamp', how='left')
+def load_entry_targets(df, item_id):
+    csv_directory = os.path.join(project_root, "csv files")
+    df = pd.read_csv(os.path.join(csv_directory, f"{item_id}_debug_data.csv"), parse_dates=['timestamp'])
     return df
 # =========================================================
 # Cleaning
@@ -213,10 +288,9 @@ def quantile_loss(y_true, y_pred, alpha):
 # Optuna Objective (Entry Regression)
 # =========================================================
 
-def entry_objective(trial, X, y, alpha=1e-4):
+def entry_objective(trial, X, y):
     params = {
-        "objective": "quantile",
-        "alpha": alpha,
+        "objective": "regression",
         "learning_rate": trial.suggest_float("lr", 0.01, 0.15, log=True),
         "num_leaves": trial.suggest_int("num_leaves", 16, 64),
         "feature_fraction": 0.8,
@@ -230,8 +304,12 @@ def entry_objective(trial, X, y, alpha=1e-4):
 
     preds = model.predict(X)
 
-    loss = quantile_loss(y, preds, alpha)
-    return -loss
+    # compute sign accuracy
+    pred_sign = np.sign(preds)
+    true_sign = np.sign(y)
+    sign_acc = np.mean(pred_sign == true_sign)
+
+    return sign_acc 
 
 
 # =========================================================
@@ -258,7 +336,7 @@ def percent_error_stats(y_true, y_pred, eps=1e-9):
 # Training
 # =========================================================
 
-def train_model_system(item_id):
+def train_model_system(item_id, lower = 0.001, upper = 0.999):
     mayor_data = get_mayor_perks()
     data = load_or_fetch_item_data(item_id)
     
@@ -287,9 +365,7 @@ def train_model_system(item_id):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    y = clip_extreme_outliers(y)
-
-
+    y = clip_extreme_outliers(y, lower_pct=lower, higher_pct=upper)
 
 
     study = optuna.create_study(direction="maximize")
@@ -303,7 +379,7 @@ def train_model_system(item_id):
     })
 
     model = lgb.train(params, lgb.Dataset(X_scaled, label=y), num_boost_round=400)
-    model_dir = os.path.join(os.path.dirname(__file__), "Model_Files")
+    model_dir = os.path.join(project_root, "Model_Files")
     os.makedirs(model_dir, exist_ok=True)
     
     base = os.path.join(model_dir, str(item_id))
@@ -331,7 +407,7 @@ def test_train_model_system(item_id, lower = 0.001, upper = 0.999):
         print(f"{item_id}: not enough data")
         return
 
-    df = build_entry_targets_fast(df)
+    df = load_entry_targets(df, item_id)
     split_idx = int(len(df) * 0.8)  
     train_df = df.iloc[:split_idx]
     val_df = df.iloc[split_idx:]
@@ -476,60 +552,6 @@ def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horiz
     return preds
 
 
-
-def fast_build_entry_targets(data, horizon_minutes=180, tax=0.0125):
-    rows = []
-    for entry in data:
-        try:
-            ts = parse_timestamp(entry['timestamp'])
-        except:
-            continue
-        
-        def f(k):
-            try:
-                return float(entry.get(k, 0))
-            except:
-                return 0.0
-        
-        row = {
-            'timestamp': ts,
-            'buy_price': f('buy'),
-            'sell_price': f('sell'),
-        }
-        rows.append(row)
-    
-    df = pd.DataFrame(rows)
-    timestamps = pd.to_datetime(df['timestamp']).astype('int64') // 10**9
-    horizon_sec = horizon_minutes * 60
-    expected_return = []
-    ts = timestamps.values
-    buy_prices = df['buy_price'].values
-    sell_prices = df['sell_price'].values
-    
-    for i in range(len(df)):
-        entry_price = sell_prices[i]
-        initial_gap = buy_prices[i] * (1 - tax) - entry_price
-        horizon_mask = (ts >= ts[i]) & (ts - ts[i] <= horizon_sec)
-        idxs_horizon = np.where(horizon_mask)[0]
-        
-        if len(idxs_horizon) == 0:
-            expected_return.append(0.0)
-            continue
-        
-        returns_horizon = (buy_prices[idxs_horizon] * (1 - tax) - entry_price) - initial_gap
-        returns_horizon /= (entry_price + 1e-9)
-        expected_return.append(np.median(returns_horizon))
-    
-    df['entry_label'] = expected_return
-    return df
-
-
-def test_datasets(item_id):
-    data = load_or_fetch_item_data(item_id)
-    df = fast_build_entry_targets(data)
-    df.to_csv(f"{item_id}_debug_data.csv", index=False)
-
-
 # =========================================================
 # ANALYZE TOP PREDICTIONS
 # =========================================================
@@ -573,6 +595,25 @@ def analyze_entries(pred_list, top_k=5):
     return enriched[:top_k]
 
 
+# =========================================================
+# GENERATE CSV FILES
+# =========================================================
+
+def generate_csv_files(item_id):
+    data = load_or_fetch_item_data(item_id)
+    df = prepare_dataframe_from_raw(data)
+    df = add_skyblock_time_features(df)
+    df = build_lagged_features(df)
+    df = add_time_features(df)
+    df = build_entry_targets(df)
+
+    csv_directory = os.path.join(project_root, "csv files")
+    os.makedirs(csv_directory, exist_ok=True)
+
+    csv_path = os.path.join(csv_directory, f"{item_id}_debug_data.csv")
+    df.to_csv(csv_path, index=False)
+
+
 
 
 
@@ -581,16 +622,22 @@ def analyze_entries(pred_list, top_k=5):
 # =========================================================
 
 if __name__ == "__main__":
+    csv_directory = os.path.join(project_root, "csv files")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(script_dir, "bazaar_full_items_ids.json")
     with open(file_path) as f:
         items = json.load(f)
     for entry in items:
+        csv_path = os.path.join(csv_directory, f"{entry}_debug_data.csv")
+        if not os.path.exists(csv_path):
+            generate_csv_files(entry)
+        """
         if entry == "BOOSTER_COOKIE":
             test_train_model_system(entry, lower=0.0001, upper=1.0)
         elif entry == "CONTROL_SWITCH" or entry == "ELECTRON_TRANSMITTER" or entry == "FTX_3070":
             test_train_model_system(entry, lower=0.01, upper=0.99)
         elif entry == "FLAWLESS_SAPPHIRE_GEM":
             test_train_model_system(entry)
+        """
 
 

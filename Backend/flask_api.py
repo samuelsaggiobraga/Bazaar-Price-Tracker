@@ -14,16 +14,21 @@ import threading
 import time
 from datetime import datetime, timezone
 import traceback
+import sys
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from LGBMfulldata import (
     predict_entries, analyze_entries
 )
-from mayor_utils import get_mayor_perks
+from Utils.mayor_utils import get_mayor_perks
 
 app = Flask(__name__)
 CORS(app)
 
-SCRIPT_DIR = os.path.join(os.path.dirname(__file__), "Model_Files")
+SCRIPT_DIR = os.path.join(project_root, "Model_Files")
 
 # Global artifacts
 models_dict = {}          # {item_id: trained_model}
@@ -77,7 +82,7 @@ def load_model_artifacts():
 
 def get_available_items():
     """Return item IDs with downloaded JSON data."""
-    json_dir = os.path.join(os.path.dirname(__file__), "Model_Files")
+    json_dir = SCRIPT_DIR
     items = []
     try:
         if os.path.exists(json_dir):

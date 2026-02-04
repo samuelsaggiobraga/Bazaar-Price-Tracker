@@ -14,6 +14,8 @@ __pycache__/
 Model_Files/
 bazaar_data/
 predictions_cache.json
+csv files/
+
 
 # Python packaging
 *.egg-info/
