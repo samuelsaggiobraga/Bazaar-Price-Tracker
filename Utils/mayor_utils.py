@@ -31,10 +31,11 @@ def get_mayor_perks():
     for entry in data:
         temp_start_date = entry["start_date"]
         start_date = datetime.strptime(temp_start_date, '%Y-%m-%d')
+        start_date = datetime.strptime(temp_start_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
         mayor_perks = entry["mayor_perks"]
+        binary_perks = [0 for _ in range(40)]
         for perk in mayor_perks:
             if perk in perk_names:
-                binary_perks = [0 for _ in range(40)]
                 perk_index = perk_names.index(perk)
                 binary_perks[perk_index] = 1
         mayor_data.append({
@@ -52,6 +53,9 @@ def get_mayor_perks():
         if not start_match:
             continue
         start_date = datetime.strptime(start_match.group(1), '%m/%d/%Y')
+        start_date = datetime.strptime(start_match.group(1), '%m/%d/%Y').replace(tzinfo=timezone.utc)
+
+
         
         binary_perks = [0 for _ in range(40)]
         matches = re.findall(r'"name":"([^"]*)"', mayor)
@@ -72,31 +76,34 @@ def get_mayor_perks():
     
     return mayor_data
 
-get_mayor_perks()
 
 
 
-def match_mayor_perks(timestamp_str, mayor_data):
-    """Match a timestamp to the appropriate mayor perks.
-    
-    Args:
-        timestamp_str: ISO format timestamp string (e.g., "2025-02-20T12:00:00.000Z")
-        mayor_data: List of mayor data from get_mayor_perks()
-        
-    Returns:
-        List of 40 binary values representing active mayor perks for that timestamp
-    """
-    try:
-        data_date = datetime.strptime(timestamp_str[:10], '%Y-%m-%d')
-    except:
-        return [0] * 40
-    
+
+
+def match_mayor_perks(timestamp, mayor_data):
+    if isinstance(timestamp, str):
+        try:
+            timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except Exception as e:
+            print(f"Failed to parse timestamp: {timestamp} -> {e}")
+            return [0] * 40
+
+    for mayor in mayor_data:
+        if isinstance(mayor['start_date'], str):
+            try:
+                mayor['start_date'] = datetime.fromisoformat(mayor['start_date'].replace("Z", "+00:00"))
+            except Exception as e:
+                print(f"Failed to parse mayor start_date: {mayor['start_date']} -> {e}")
+                mayor['start_date'] = datetime.min  # fallback
+
     for i, mayor in enumerate(mayor_data):
-        if i + 1 < len(mayor_data):
-            if mayor['start_date'] <= data_date < mayor_data[i + 1]['start_date']:
-                return mayor['perks']
+        next_start = mayor_data[i + 1]['start_date'] if i + 1 < len(mayor_data) else None
+        if next_start:
+            if mayor['start_date'] <= timestamp < next_start:
+                return mayor['perks'] if isinstance(mayor['perks'], list) else [0] * 40
         else:
-            if mayor['start_date'] <= data_date:
-                return mayor['perks']
-    
+            if mayor['start_date'] <= timestamp:
+                return mayor['perks'] if isinstance(mayor['perks'], list) else [0] * 40
+
     return [0] * 40
