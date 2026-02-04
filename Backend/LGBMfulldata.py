@@ -4,7 +4,6 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
-
 import optuna
 import json
 import numpy as np
@@ -119,7 +118,6 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
             perks = match_mayor_perks(ts, mayor_data)
             for i, v in enumerate(perks):
                 row[f'mayor_{i}'] = v
-
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -330,6 +328,27 @@ def percent_error_stats(y_true, y_pred, eps=1e-9):
     return stats
 
 
+# =========================================================
+# GENERATE CSV FILES
+# =========================================================
+
+def generate_csv_files(item_id):
+    mayor_data = get_mayor_perks()
+    data = load_or_fetch_item_data(item_id)
+    df = prepare_dataframe_from_raw(data, mayor_data)
+    df = add_skyblock_time_features(df)
+    df = build_lagged_features(df)
+    df = add_time_features(df)
+    df = build_entry_targets(df)
+
+    csv_directory = os.path.join(project_root, "csv files")
+    os.makedirs(csv_directory, exist_ok=True)
+
+    csv_path = os.path.join(csv_directory, f"{item_id}_debug_data.csv")
+    df.to_csv(csv_path, index=False)
+
+    return df
+
 
 # =========================================================
 # Training
@@ -341,13 +360,7 @@ def train_model_system(item_id, lower = 0.001, upper = 0.999):
         df = load_entry_targets(item_id)
     else:
         print(f"✗ CSV file for {item_id} does not exist")
-        mayor_data = get_mayor_perks()
-        data = load_or_fetch_item_data(item_id)
-        df = prepare_dataframe_from_raw(data, mayor_data)
-        df = add_skyblock_time_features(df)
-        df = build_lagged_features(df)
-        df = add_time_features(df)
-        df = build_entry_targets(df)
+        df = generate_csv_files(item_id)
     
     exclude = {'timestamp', 'entry_label'}
     feature_cols = [c for c in df.columns if c not in exclude]
@@ -406,13 +419,7 @@ def test_train_model_system(item_id, lower = 0.001, upper = 0.999):
         df = load_entry_targets(item_id)
     else:
         print(f"✗ CSV file for {item_id} does not exist")
-        mayor_data = get_mayor_perks()
-        data = load_or_fetch_item_data(item_id)
-        df = prepare_dataframe_from_raw(data, mayor_data)
-        df = add_skyblock_time_features(df)
-        df = build_lagged_features(df)
-        df = add_time_features(df)
-        df = build_entry_targets(df)
+        df = generate_csv_files(item_id)
 
     split_idx = int(len(df) * 0.8)  
     train_df = df.iloc[:split_idx]
@@ -599,29 +606,6 @@ def analyze_entries(pred_list, top_k=5):
     enriched.sort(key=lambda x: (x['delta_minutes'], -x['entry_score']))
 
     return enriched[:top_k]
-
-
-# =========================================================
-# GENERATE CSV FILES
-# =========================================================
-
-def generate_csv_files(item_id):
-    mayor_data = get_mayor_perks()
-    data = load_or_fetch_item_data(item_id)
-    df = prepare_dataframe_from_raw(data, mayor_data)
-    df = add_skyblock_time_features(df)
-    df = build_lagged_features(df)
-    df = add_time_features(df)
-    df = build_entry_targets(df)
-
-    csv_directory = os.path.join(project_root, "csv files")
-    os.makedirs(csv_directory, exist_ok=True)
-
-    csv_path = os.path.join(csv_directory, f"{item_id}_debug_data.csv")
-    df.to_csv(csv_path, index=False)
-
-
-
 
 
 # =========================================================
