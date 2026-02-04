@@ -307,51 +307,15 @@ def fetch_all_data_fast(item, start=None, end=None, interval_seconds=82800, use_
 
 
 def load_or_fetch_item_data(item_id, fetch_if_missing=True, update_with_new_data=False, use_compression=True, use_fast_mode=False):
-    json_dir = os.path.join(os.path.dirname(__file__), "bazaar_data")
-    legacy_dir = os.path.expanduser("~/Json Files")
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    json_dir = os.path.join(base_dir, "bazaar_data")
 
     os.makedirs(json_dir, exist_ok=True)
 
     if use_compression:
-        primary_filename = os.path.join(json_dir, f"bazaar_history_{item_id}.pkl.gz")
-        primary_json_filename = os.path.join(json_dir, f"bazaar_history_combined_{item_id}.json")
-        legacy_filename = os.path.join(legacy_dir, f"bazaar_history_{item_id}.pkl.gz")
-        legacy_json_filename = os.path.join(legacy_dir, f"bazaar_history_combined_{item_id}.json")
-
-        if os.path.exists(primary_filename):
-            filename = primary_filename
-        elif os.path.exists(legacy_filename):
-            filename = legacy_filename
-            print(f"  → Using legacy cache from {legacy_dir} for {item_id}")
-        else:
-            if os.path.exists(primary_json_filename):
-                filename = primary_filename
-                print(f"  → Migrating {item_id} to compressed format...")
-                try:
-                    with open(primary_json_filename, 'r') as f:
-                        data = json.load(f)
-                    with gzip.open(primary_filename, 'wb') as f:
-                        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
-                    os.remove(primary_json_filename)
-                    print(f"  ✓ Migrated and compressed")
-                except Exception as e:
-                    print(f"  ✗ Migration failed: {e}")
-                    filename = primary_json_filename
-            elif os.path.exists(legacy_json_filename):
-                filename = legacy_json_filename
-                print(f"  → Using legacy JSON cache from {legacy_dir} for {item_id}")
-            else:
-                filename = primary_filename
+        filename = os.path.join(json_dir, f"bazaar_history_{item_id}.pkl.gz")
     else:
-        primary_filename = os.path.join(json_dir, f"bazaar_history_combined_{item_id}.json")
-        legacy_filename = os.path.join(legacy_dir, f"bazaar_history_combined_{item_id}.json")
-        if os.path.exists(primary_filename):
-            filename = primary_filename
-        elif os.path.exists(legacy_filename):
-            filename = legacy_filename
-            print(f"  → Using legacy JSON cache from {legacy_dir} for {item_id}")
-        else:
-            filename = primary_filename
+        filename = os.path.join(json_dir, f"bazaar_history_combined_{item_id}.json")
     
     if not os.path.exists(filename):
         if fetch_if_missing:

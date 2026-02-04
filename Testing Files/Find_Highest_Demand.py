@@ -1,4 +1,4 @@
-from data_utils import load_or_fetch_item_data
+from Utils.data_utils import load_or_fetch_item_data
 import requests
 import json
 import statistics

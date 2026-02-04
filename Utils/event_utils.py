@@ -1,6 +1,5 @@
 from datetime import datetime, timezone, timedelta
 from unicodedata import name
-import os
 
 epoch = datetime(2019, 6, 11, 17, 55, tzinfo=timezone.utc)
 time_to_new_year= timedelta(hours = 124)
