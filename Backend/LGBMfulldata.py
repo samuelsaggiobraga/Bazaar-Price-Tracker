@@ -43,10 +43,9 @@ def clean_dump(obj, path):
         os.remove(path)
     os.rename(tmp, path)
 
-def clip_extreme_outliers(y, lower_pct=0.0001, upper_pct=0.9999):
-    lower = np.percentile(y, lower_pct*100)
-    upper = np.percentile(y, upper_pct*100)
-    return np.clip(y, lower, upper)
+def clip_extreme_outliers(y, threshold=0.3):
+    y = np.asarray(y)
+    return np.clip(y, -threshold, threshold)
 
 # =========================================================
 # Feature Engineering
@@ -353,7 +352,7 @@ def generate_csv_files(item_id):
 # Training
 # =========================================================
 
-def train_model_system(item_id, lower = 0.001, upper = 0.999):
+def train_model_system(item_id):
     if os.path.exists(os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")):
         print(f"✓ CSV file for {item_id} already exists")
         df = load_entry_targets(item_id)
@@ -379,8 +378,7 @@ def train_model_system(item_id, lower = 0.001, upper = 0.999):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    y = clip_extreme_outliers(y, lower_pct=lower, higher_pct=upper)
-
+    y = clip_extreme_outliers(y)
 
     study = optuna.create_study(direction="maximize")
     study.optimize(lambda t: entry_objective(t, X_scaled, y), n_trials=30)
@@ -412,7 +410,7 @@ def train_model_system(item_id, lower = 0.001, upper = 0.999):
 # =========================================================
 
 
-def test_train_model_system(item_id, lower = 0.001, upper = 0.999):
+def test_train_model_system(item_id):
     if os.path.exists(os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")):
         print(f"✓ CSV file for {item_id} already exists")
         df = load_entry_targets(item_id)
@@ -441,8 +439,8 @@ def test_train_model_system(item_id, lower = 0.001, upper = 0.999):
     X_val = clean_infinite_values(val_df[feature_cols].values)
     y_val = val_df['entry_label'].values
 
-    y_val = clip_extreme_outliers(y_val, lower_pct=lower, upper_pct=upper) 
-    y_train = clip_extreme_outliers(y_train, lower_pct=lower, upper_pct=upper)
+    y_val = clip_extreme_outliers(y_val)
+    y_train = clip_extreme_outliers(y_train)
 
 
     scaler = StandardScaler()
@@ -636,11 +634,5 @@ if __name__ == "__main__":
     file_path = os.path.join(script_dir, "bazaar_full_items_ids.json")
     with open(file_path) as f:
         items = json.load(f)
-        
     for entry in items:
-        if entry == "BOOSTER_COOKIE":
-            test_train_model_system(entry, lower=0.0001, upper=1.0)
-        elif entry == "CONTROL_SWITCH" or entry == "ELECTRON_TRANSMITTER" or entry == "FTX_3070":
-            test_train_model_system(entry, lower=0.01, upper=0.99)
-        elif entry == "FLAWLESS_SAPPHIRE_GEM":
-            test_train_model_system(entry)
+        test_train_model_system(entry)
