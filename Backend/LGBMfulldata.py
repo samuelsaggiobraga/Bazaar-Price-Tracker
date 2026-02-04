@@ -139,11 +139,10 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
 
 def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
     df = df.copy().sort_values('timestamp').reset_index(drop=True)
-    timestamps = pd.to_datetime(df['timestamp']).astype('int64') // 10**9
-    timestamps = timestamps.values  # Pure numpy for faster indexing
+    ts = pd.to_datetime(df['timestamp']).astype('int64') // 10**9
+    ts = ts.values # Pure numpy for faster indexing
     horizon_sec = horizon_minutes * 60
     
-    ts = timestamps.values
     buy_prices = df['buy_price'].values
     sell_prices = df['sell_price'].values
     n = len(df)
@@ -631,6 +630,8 @@ if __name__ == "__main__":
         csv_path = os.path.join(csv_directory, f"{entry}_debug_data.csv")
         if not os.path.exists(csv_path):
             generate_csv_files(entry)
+
+
         """
         if entry == "BOOSTER_COOKIE":
             test_train_model_system(entry, lower=0.0001, upper=1.0)
