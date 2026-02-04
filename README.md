@@ -12,7 +12,7 @@ Bazaar Price Tracker powers a Minecraft Hypixel SkyBlock "Bazaar mod" by collect
    - `pip install -r requirements.txt`
 3. **Start the API server**:
    - `python flask_api.py`
-4. Point your **Bazaar mod** to the Flask API base URL (default: `http://localhost:5000`).
+4. Point your **Bazaar mod** to the Flask API base URL (default: `http://localhost:5001`).
 
 
 ## Architecture

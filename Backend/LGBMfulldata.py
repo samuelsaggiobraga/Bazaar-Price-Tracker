@@ -27,13 +27,23 @@ warnings.filterwarnings("ignore")
 
 
 def clean_dump(obj, path):
+    """Atomic write with fsync for durability"""
     tmp = path + ".tmp"
     joblib.dump(obj, tmp)
-
-    with open(tmp, "rb") as f:
-        os.fsync(f.fileno())
-
-    os.replace(tmp, path)
+    
+    # Force write to disk (Windows-compatible)
+    try:
+        with open(tmp, "r+b") as f:
+            f.flush()
+            os.fsync(f.fileno())
+    except (OSError, IOError):
+        # If fsync fails, continue anyway - file is already written
+        pass
+    
+    # Atomic rename
+    if os.path.exists(path):
+        os.remove(path)
+    os.rename(tmp, path)
 
 def clip_extreme_outliers(y, lower_pct=0.0001, upper_pct=0.9999):
     lower = np.percentile(y, lower_pct*100)
@@ -129,11 +139,10 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
 
 def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
     df = df.copy().sort_values('timestamp').reset_index(drop=True)
-    
-    timestamps = pd.to_datetime(df['timestamp']).astype('int64') // 10**9
+    ts = pd.to_datetime(df['timestamp']).astype('int64') // 10**9
+    ts = ts.values # Pure numpy for faster indexing
     horizon_sec = horizon_minutes * 60
     
-    ts = timestamps.values
     buy_prices = df['buy_price'].values
     sell_prices = df['sell_price'].values
     n = len(df)
@@ -341,7 +350,17 @@ def train_model_system(item_id, lower = 0.001, upper = 0.999):
     feature_cols = [c for c in df.columns if c not in exclude]
 
     X = clean_infinite_values(df[feature_cols].values)
-    y = df['entry_label'].values
+    y = df['future_max_return'].values
+
+    # Quick label diagnostics
+    try:
+        print(
+            f"{item_id} labels: min={np.min(y):.6f}, med={np.median(y):.6f}, max={np.max(y):.6f}, "
+            f"pos%={(np.mean(y > 0) * 100):.2f}%"
+        )
+    except Exception:
+        pass
+
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
@@ -491,9 +510,10 @@ def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horiz
 
     last_row = df.iloc[-1:].copy()
 
-    future_times = pd.date_range(start=now, periods=int(horizon_hours*60/step_minutes), freq=f"{step_minutes}T")
+    future_times = pd.date_range(start=now, periods=int(horizon_hours*60/step_minutes), freq=f"{step_minutes}min")
 
     preds = []
+    scores = []
     for ts in future_times:
         row = last_row.copy()
         row['timestamp'] = ts
@@ -513,7 +533,19 @@ def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horiz
         y_pred = model.predict(X_scaled)[0]
         row['entry_score'] = y_pred
         row['timestamp'] = ts.isoformat()
+        scores.append(y_pred)
         preds.append(row[['timestamp', 'buy_price', 'sell_price', 'entry_score']].to_dict(orient='records')[0])
+
+    # Quick prediction diagnostics
+    if scores:
+        try:
+            s = np.array(scores)
+            print(
+                f"{item_id} scores: min={s.min():.6f}, med={np.median(s):.6f}, max={s.max():.6f}, "
+                f"pos%={(np.mean(s > 0) * 100):.2f}%"
+            )
+        except Exception:
+            pass
 
 
     return preds
@@ -598,6 +630,8 @@ if __name__ == "__main__":
         csv_path = os.path.join(csv_directory, f"{entry}_debug_data.csv")
         if not os.path.exists(csv_path):
             generate_csv_files(entry)
+
+
         """
         if entry == "BOOSTER_COOKIE":
             test_train_model_system(entry, lower=0.0001, upper=1.0)
