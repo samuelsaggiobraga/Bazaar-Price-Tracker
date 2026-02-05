@@ -1,0 +1,448 @@
+package com.example.examplemod;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiButton;
+import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.gui.GuiTextField;
+import net.minecraft.client.renderer.GlStateManager;
+import net.minecraft.util.EnumChatFormatting;
+import org.lwjgl.input.Keyboard;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import java.awt.*;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
+
+public class BazaarTrackerGUI extends GuiScreen {
+    
+    private static final String API_URL = "http://localhost:5001";
+    private static final int BACKGROUND_COLOR = 0xE0151515; // Dark charcoal with transparency
+    private static final int PANEL_COLOR = 0xE01F1F1F; // Slightly lighter charcoal
+    private static final int HEADER_COLOR = 0xE0252525; // Header bar color
+    private static final int BORDER_COLOR = 0xFF2A2A2A; // Subtle border
+    private static final int TEXT_PRIMARY = 0xFFE0E0E0; // Light gray text
+    private static final int TEXT_SECONDARY = 0xFFA0A0A0; // Dimmer text
+    private static final int BUY_COLOR = 0xFF00C853; // Professional green
+    private static final int SELL_COLOR = 0xFFD32F2F; // Professional red
+    private static final int ACCENT_COLOR = 0xFF1976D2; // Professional blue
+    
+    private GuiTextField searchField;
+    private List<RecommendationEntry> recommendations;
+    private RecommendationEntry searchResult;
+    private boolean isLoading;
+    private String errorMessage;
+    private int scrollOffset;
+    private boolean isSearching;
+    
+    public BazaarTrackerGUI() {
+        this.recommendations = new ArrayList<>();
+        this.isLoading = true;
+        this.scrollOffset = 0;
+        this.isSearching = false;
+    }
+    
+    @Override
+    public void initGui() {
+        Keyboard.enableRepeatEvents(true);
+        
+        int centerX = this.width / 2;
+        int searchBarWidth = 300;
+        
+        // Search field at top
+        this.searchField = new GuiTextField(0, this.fontRendererObj, centerX - searchBarWidth / 2, 30, searchBarWidth, 20);
+        this.searchField.setMaxStringLength(50);
+        this.searchField.setFocused(false);
+        this.searchField.setText("");
+        
+        // Refresh button
+        this.buttonList.add(new GuiButton(1, centerX + searchBarWidth / 2 + 10, 28, 80, 20, "Refresh"));
+        
+        // Fetch recommendations on init
+        fetchRecommendations();
+    }
+    
+    @Override
+    public void onGuiClosed() {
+        Keyboard.enableRepeatEvents(false);
+    }
+    
+    @Override
+    protected void actionPerformed(GuiButton button) {
+        if (button.id == 1) {
+            // Refresh button
+            fetchRecommendations();
+        }
+    }
+    
+    @Override
+    protected void keyTyped(char typedChar, int keyCode) {
+        if (this.searchField.isFocused()) {
+            this.searchField.textboxKeyTyped(typedChar, keyCode);
+            
+            // Search on Enter
+            if (keyCode == Keyboard.KEY_RETURN) {
+                String query = this.searchField.getText().trim();
+                if (!query.isEmpty()) {
+                    searchItem(query);
+                } else {
+                    this.searchResult = null;
+                    this.isSearching = false;
+                }
+            }
+        } else if (keyCode == Keyboard.KEY_ESCAPE) {
+            this.mc.displayGuiScreen(null);
+        }
+    }
+    
+    @Override
+    protected void mouseClicked(int mouseX, int mouseY, int mouseButton) {
+        super.mouseClicked(mouseX, mouseY, mouseButton);
+        this.searchField.mouseClicked(mouseX, mouseY, mouseButton);
+    }
+    
+    @Override
+    public void handleMouseInput() {
+        super.handleMouseInput();
+        int wheel = org.lwjgl.input.Mouse.getEventDWheel();
+        if (wheel != 0) {
+            if (wheel > 0) {
+                scrollOffset = Math.max(0, scrollOffset - 1);
+            } else {
+                int maxScroll = Math.max(0, recommendations.size() - 8);
+                scrollOffset = Math.min(maxScroll, scrollOffset + 1);
+            }
+        }
+    }
+    
+    @Override
+    public void drawScreen(int mouseX, int mouseY, float partialTicks) {
+        // Draw dark background
+        drawRect(0, 0, this.width, this.height, BACKGROUND_COLOR);
+        
+        int centerX = this.width / 2;
+        int panelWidth = 700;
+        int panelHeight = 450;
+        int panelX = centerX - panelWidth / 2;
+        int panelY = 60;
+        
+        // Main panel
+        drawRect(panelX, panelY, panelX + panelWidth, panelY + panelHeight, PANEL_COLOR);
+        drawRect(panelX, panelY, panelX + panelWidth, panelY + 1, BORDER_COLOR);
+        drawRect(panelX, panelY + panelHeight - 1, panelX + panelWidth, panelY + panelHeight, BORDER_COLOR);
+        drawRect(panelX, panelY, panelX + 1, panelY + panelHeight, BORDER_COLOR);
+        drawRect(panelX + panelWidth - 1, panelY, panelX + panelWidth, panelY + panelHeight, BORDER_COLOR);
+        
+        // Header bar
+        drawRect(panelX, panelY, panelX + panelWidth, panelY + 35, HEADER_COLOR);
+        drawRect(panelX, panelY + 35, panelX + panelWidth, panelY + 36, BORDER_COLOR);
+        
+        // Title
+        String title = "BAZAAR MARKET ANALYSIS";
+        drawCenteredString(this.fontRendererObj, title, centerX, panelY + 13, TEXT_PRIMARY);
+        
+        // Search bar label
+        drawString(this.fontRendererObj, "Search Item:", centerX - 150 - 60, 35, TEXT_SECONDARY);
+        
+        // Search field
+        this.searchField.drawTextBox();
+        
+        // Draw content
+        if (isLoading) {
+            drawCenteredString(this.fontRendererObj, "Loading market data...", centerX, panelY + 220, TEXT_SECONDARY);
+        } else if (errorMessage != null) {
+            drawCenteredString(this.fontRendererObj, "Error: " + errorMessage, centerX, panelY + 220, SELL_COLOR);
+            drawCenteredString(this.fontRendererObj, "Make sure Flask server is running on port 5001", centerX, panelY + 240, TEXT_SECONDARY);
+        } else if (isSearching && searchResult != null) {
+            // Show search result
+            drawSearchResult(panelX, panelY);
+        } else if (isSearching && searchResult == null) {
+            drawCenteredString(this.fontRendererObj, "No data found for searched item", centerX, panelY + 220, TEXT_SECONDARY);
+        } else {
+            // Show recommendations
+            drawRecommendations(panelX, panelY, panelWidth, panelHeight);
+        }
+        
+        super.drawScreen(mouseX, mouseY, partialTicks);
+        
+        // Footer
+        drawCenteredString(this.fontRendererObj, "Powered by LGBM Prediction Model", centerX, this.height - 15, TEXT_SECONDARY);
+    }
+    
+    private void drawRecommendations(int panelX, int panelY, int panelWidth, int panelHeight) {
+        // Column headers
+        int headerY = panelY + 50;
+        int rowHeight = 45;
+        
+        drawString(this.fontRendererObj, "RANK", panelX + 15, headerY, ACCENT_COLOR);
+        drawString(this.fontRendererObj, "ITEM", panelX + 60, headerY, ACCENT_COLOR);
+        drawString(this.fontRendererObj, "ACTION", panelX + 280, headerY, ACCENT_COLOR);
+        drawString(this.fontRendererObj, "CURRENT", panelX + 360, headerY, ACCENT_COLOR);
+        drawString(this.fontRendererObj, "TARGET", panelX + 455, headerY, ACCENT_COLOR);
+        drawString(this.fontRendererObj, "PROFIT", panelX + 545, headerY, ACCENT_COLOR);
+        drawString(this.fontRendererObj, "CONF", panelX + 625, headerY, ACCENT_COLOR);
+        
+        // Header separator
+        drawRect(panelX + 5, headerY + 12, panelX + panelWidth - 5, headerY + 13, BORDER_COLOR);
+        
+        // Draw recommendations
+        int startY = headerY + 20;
+        int visibleItems = Math.min(8, recommendations.size() - scrollOffset);
+        
+        for (int i = 0; i < visibleItems; i++) {
+            int index = i + scrollOffset;
+            if (index >= recommendations.size()) break;
+            
+            RecommendationEntry rec = recommendations.get(index);
+            int rowY = startY + i * rowHeight;
+            
+            // Alternating row background
+            if (i % 2 == 0) {
+                drawRect(panelX + 5, rowY - 2, panelX + panelWidth - 5, rowY + rowHeight - 7, 0x40000000);
+            }
+            
+            // Rank
+            drawString(this.fontRendererObj, "#" + (index + 1), panelX + 15, rowY + 2, TEXT_PRIMARY);
+            
+            // Item name (shortened)
+            String itemName = rec.itemId.replace("_", " ");
+            if (itemName.length() > 25) {
+                itemName = itemName.substring(0, 22) + "...";
+            }
+            drawString(this.fontRendererObj, itemName, panelX + 60, rowY + 2, TEXT_PRIMARY);
+            
+            // Action with color
+            int actionColor = rec.action.equals("BUY") ? BUY_COLOR : SELL_COLOR;
+            drawString(this.fontRendererObj, rec.action, panelX + 280, rowY + 2, actionColor);
+            
+            // Prices
+            drawString(this.fontRendererObj, formatPrice(rec.currentPrice), panelX + 360, rowY + 2, TEXT_PRIMARY);
+            drawString(this.fontRendererObj, formatPrice(rec.predictedPrice), panelX + 455, rowY + 2, TEXT_PRIMARY);
+            
+            // Profit percentage
+            String profitStr = String.format("+%.1f%%", rec.profitPct);
+            drawString(this.fontRendererObj, profitStr, panelX + 545, rowY + 2, BUY_COLOR);
+            
+            // Confidence bar
+            int barWidth = 50;
+            int barX = panelX + 620;
+            int barY = rowY + 7;
+            int barHeight = 8;
+            int fillWidth = (int) (barWidth * (rec.confidence / 100.0));
+            
+            // Bar background
+            drawRect(barX, barY, barX + barWidth, barY + barHeight, 0xFF333333);
+            // Bar fill
+            int barColor = getConfidenceColor(rec.confidence);
+            drawRect(barX, barY, barX + fillWidth, barY + barHeight, barColor);
+            
+            // Confidence text
+            String confStr = String.format("%.0f%%", rec.confidence);
+            drawString(this.fontRendererObj, confStr, barX + 5, rowY + 17, TEXT_SECONDARY);
+        }
+        
+        // Scroll indicator
+        if (recommendations.size() > 8) {
+            String scrollText = String.format("Showing %d-%d of %d (scroll to see more)", 
+                scrollOffset + 1, 
+                Math.min(scrollOffset + 8, recommendations.size()), 
+                recommendations.size());
+            drawCenteredString(this.fontRendererObj, scrollText, panelX + panelWidth / 2, 
+                panelY + panelHeight - 20, TEXT_SECONDARY);
+        }
+    }
+    
+    private void drawSearchResult(int panelX, int panelY) {
+        int centerX = this.width / 2;
+        int startY = panelY + 100;
+        
+        drawCenteredString(this.fontRendererObj, "SEARCH RESULT", centerX, startY, ACCENT_COLOR);
+        
+        RecommendationEntry rec = searchResult;
+        
+        // Item name
+        String itemName = rec.itemId.replace("_", " ");
+        drawCenteredString(this.fontRendererObj, itemName, centerX, startY + 30, TEXT_PRIMARY);
+        
+        // Action
+        int actionColor = rec.action.equals("BUY") ? BUY_COLOR : SELL_COLOR;
+        drawCenteredString(this.fontRendererObj, "RECOMMENDATION: " + rec.action, centerX, startY + 50, actionColor);
+        
+        // Price info
+        drawCenteredString(this.fontRendererObj, "Current Price: " + formatPrice(rec.currentPrice), 
+            centerX, startY + 80, TEXT_PRIMARY);
+        drawCenteredString(this.fontRendererObj, "Predicted Price: " + formatPrice(rec.predictedPrice), 
+            centerX, startY + 100, TEXT_PRIMARY);
+        
+        // Profit
+        String profitStr = String.format("Expected Profit: +%.2f%%", rec.profitPct);
+        drawCenteredString(this.fontRendererObj, profitStr, centerX, startY + 130, BUY_COLOR);
+        
+        // Confidence
+        String confStr = String.format("Confidence: %.0f%%", rec.confidence);
+        int confColor = getConfidenceColor(rec.confidence);
+        drawCenteredString(this.fontRendererObj, confStr, centerX, startY + 160, confColor);
+        
+        // Confidence bar
+        int barWidth = 200;
+        int barX = centerX - barWidth / 2;
+        int barY = startY + 180;
+        int barHeight = 15;
+        int fillWidth = (int) (barWidth * (rec.confidence / 100.0));
+        
+        drawRect(barX, barY, barX + barWidth, barY + barHeight, 0xFF333333);
+        drawRect(barX, barY, barX + fillWidth, barY + barHeight, confColor);
+        
+        drawCenteredString(this.fontRendererObj, "Press ESC to return to recommendations", 
+            centerX, startY + 220, TEXT_SECONDARY);
+    }
+    
+    private int getConfidenceColor(double confidence) {
+        if (confidence >= 80) return 0xFF00C853; // High confidence - green
+        if (confidence >= 60) return 0xFFFFA726; // Medium confidence - orange
+        return 0xFFFF5252; // Low confidence - red
+    }
+    
+    private String formatPrice(double price) {
+        if (price >= 1000000) {
+            return String.format("%.2fM", price / 1000000);
+        } else if (price >= 1000) {
+            return String.format("%.2fK", price / 1000);
+        } else {
+            return String.format("%.2f", price);
+        }
+    }
+    
+    private void fetchRecommendations() {
+        this.isLoading = true;
+        this.errorMessage = null;
+        this.isSearching = false;
+        this.searchResult = null;
+        this.scrollOffset = 0;
+        
+        new Thread(() -> {
+            try {
+                String response = fetchFromUrl(API_URL + "/recommendations?limit=10&min_confidence=50");
+                parseRecommendations(response);
+                this.isLoading = false;
+            } catch (Exception e) {
+                this.errorMessage = e.getMessage();
+                this.isLoading = false;
+            }
+        }).start();
+    }
+    
+    private void searchItem(String itemId) {
+        this.isLoading = true;
+        this.errorMessage = null;
+        this.isSearching = true;
+        this.searchResult = null;
+        
+        new Thread(() -> {
+            try {
+                String response = fetchFromUrl(API_URL + "/predict/" + itemId.toUpperCase().replace(" ", "_"));
+                parseSearchResult(response);
+                this.isLoading = false;
+            } catch (Exception e) {
+                this.errorMessage = "Item not found: " + itemId;
+                this.searchResult = null;
+                this.isLoading = false;
+            }
+        }).start();
+    }
+    
+    private String fetchFromUrl(String urlString) throws Exception {
+        URL url = new URL(urlString);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("GET");
+        conn.setConnectTimeout(5000);
+        conn.setReadTimeout(5000);
+        
+        int responseCode = conn.getResponseCode();
+        if (responseCode != 200) {
+            throw new Exception("Server returned code: " + responseCode);
+        }
+        
+        BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+        StringBuilder response = new StringBuilder();
+        String line;
+        
+        while ((line = in.readLine()) != null) {
+            response.append(line);
+        }
+        in.close();
+        
+        return response.toString();
+    }
+    
+    private void parseRecommendations(String jsonResponse) {
+        try {
+            JsonParser parser = new JsonParser();
+            JsonObject root = parser.parse(jsonResponse).getAsJsonObject();
+            JsonArray recArray = root.getAsJsonArray("recommendations");
+            
+            List<RecommendationEntry> newRecs = new ArrayList<>();
+            
+            for (int i = 0; i < recArray.size(); i++) {
+                JsonObject rec = recArray.get(i).getAsJsonObject();
+                
+                RecommendationEntry entry = new RecommendationEntry();
+                entry.itemId = rec.get("item_id").getAsString();
+                entry.action = rec.get("action").getAsString();
+                entry.currentPrice = rec.get("current_price").getAsDouble();
+                entry.predictedPrice = rec.get("predicted_price").getAsDouble();
+                entry.profitPct = rec.get("expected_profit_pct").getAsDouble();
+                entry.confidence = rec.get("confidence").getAsDouble();
+                
+                newRecs.add(entry);
+            }
+            
+            this.recommendations = newRecs;
+        } catch (Exception e) {
+            this.errorMessage = "Failed to parse response";
+        }
+    }
+    
+    private void parseSearchResult(String jsonResponse) {
+        try {
+            JsonParser parser = new JsonParser();
+            JsonObject prediction = parser.parse(jsonResponse).getAsJsonObject();
+            
+            RecommendationEntry entry = new RecommendationEntry();
+            entry.itemId = prediction.get("item_id").getAsString();
+            entry.currentPrice = prediction.get("current_price").getAsDouble();
+            entry.predictedPrice = prediction.get("predicted_price").getAsDouble();
+            
+            double changePct = prediction.get("predicted_change_pct").getAsDouble();
+            entry.profitPct = Math.abs(changePct);
+            entry.confidence = prediction.get("confidence").getAsDouble();
+            
+            String direction = prediction.get("direction").getAsString();
+            entry.action = direction.equals("UP") ? "BUY" : "SELL";
+            
+            this.searchResult = entry;
+        } catch (Exception e) {
+            this.errorMessage = "Failed to parse search result";
+        }
+    }
+    
+    @Override
+    public boolean doesGuiPauseGame() {
+        return false;
+    }
+    
+    private static class RecommendationEntry {
+        String itemId;
+        String action;
+        double currentPrice;
+        double predictedPrice;
+        double profitPct;
+        double confidence;
+    }
+}
