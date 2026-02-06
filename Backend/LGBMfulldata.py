@@ -24,6 +24,10 @@ warnings.filterwarnings("ignore")
 
 
 
+# =========================================================
+# Data Dump
+# =========================================================
+
 def clean_dump(obj, path):
     """Atomic write with fsync for durability"""
     tmp = path + ".tmp"
@@ -43,9 +47,21 @@ def clean_dump(obj, path):
         os.remove(path)
     os.rename(tmp, path)
 
-def clip_extreme_outliers(y, threshold=0.3):
+# =========================================================
+# Data Cleaning
+# =========================================================
+def clean_infinite_values(X):
+    X = np.asarray(X, dtype=np.float64)
+    X = np.nan_to_num(X, nan=0.0, posinf=1e8, neginf=-1e8)
+    return np.clip(X, -1e8, 1e8)
+
+def clip_extreme_outliers(y, threshold=0.25):
     y = np.asarray(y)
     return np.clip(y, -threshold, threshold)
+
+def remove_extremes(X, y, cutoff=0.5):
+    mask = np.abs(y) <= cutoff
+    return X[mask], y[mask]
 
 # =========================================================
 # Feature Engineering
@@ -127,11 +143,6 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
     df = build_lagged_features(df, price_col='buy_price', vol_col='buy_volume', prefix='buy_')
     df = add_skyblock_time_features(df, ts_col='timestamp')
     return df
-
-
-# =========================================================
-# ENTRY-ONLY LABELING (Regression Target)
-# =========================================================
 
 def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
     df = df.copy().sort_values('timestamp').reset_index(drop=True)
@@ -262,14 +273,6 @@ def load_entry_targets(item_id):
     csv_directory = os.path.join(project_root, "csv files")
     df = pd.read_csv(os.path.join(csv_directory, f"{item_id}_debug_data.csv"), parse_dates=['timestamp'])
     return df
-# =========================================================
-# Cleaning
-# =========================================================
-
-def clean_infinite_values(X):
-    X = np.asarray(X, dtype=np.float64)
-    X = np.nan_to_num(X, nan=0.0, posinf=1e8, neginf=-1e8)
-    return np.clip(X, -1e8, 1e8)
 
 # =========================================================
 # Quantile Loss
@@ -283,7 +286,16 @@ def quantile_loss(y_true, y_pred, alpha):
 # Optuna Objective (Entry Regression)
 # =========================================================
 
-def entry_objective(trial, X, y):
+def entry_objective(trial, X, y_raw):
+    clip_thr = trial.suggest_float(
+        "label_clip",
+        0.01,
+        0.5,
+        log=True
+    )
+
+    y = np.clip(y_raw, -clip_thr, clip_thr)
+
     params = {
         "objective": "regression",
         "learning_rate": trial.suggest_float("lr", 0.01, 0.15, log=True),
@@ -299,12 +311,10 @@ def entry_objective(trial, X, y):
 
     preds = model.predict(X)
 
-    # compute sign accuracy
-    pred_sign = np.sign(preds)
-    true_sign = np.sign(y)
-    sign_acc = np.mean(pred_sign == true_sign)
+    sign_acc = np.mean(np.sign(preds) == np.sign(y))
+    clipped_frac = np.mean(np.abs(y_raw) >= clip_thr)
+    return sign_acc - 0.25 * clipped_frac
 
-    return sign_acc 
 
 
 # =========================================================
@@ -378,17 +388,19 @@ def train_model_system(item_id):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    y = clip_extreme_outliers(y)
+    X_scaled, y = remove_extremes(X_scaled, y, cutoff=0.5)
 
     study = optuna.create_study(direction="maximize")
     study.optimize(lambda t: entry_objective(t, X_scaled, y), n_trials=30)
 
     params = study.best_params
+    best_clip = params.pop("label_clip")
     params.update({
         "objective": "regression",
         "metric": "rmse",
         "verbosity": -1
     })
+    y = clip_extreme_outliers(y, threshold=best_clip)
 
     model = lgb.train(params, lgb.Dataset(X_scaled, label=y), num_boost_round=400)
     model_dir = os.path.join(project_root, "Model_Files")
@@ -439,13 +451,14 @@ def test_train_model_system(item_id):
     X_val = clean_infinite_values(val_df[feature_cols].values)
     y_val = val_df['entry_label'].values
 
-    y_val = clip_extreme_outliers(y_val)
-    y_train = clip_extreme_outliers(y_train)
 
 
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_val_scaled = scaler.transform(X_val)
+
+    X_train_scaled, y_train = remove_extremes(X_train_scaled, y_train, cutoff=0.5)
+    X_val_scaled, y_val = remove_extremes(X_val_scaled, y_val, cutoff=0.5)
 
     print("y_train: min =", y_train.min(), 
       "median =", np.median(y_train), 
@@ -479,11 +492,15 @@ def test_train_model_system(item_id):
     study.optimize(lambda t: entry_objective(t, X_train_scaled, y_train), n_trials=30)
 
     params = study.best_params
+    best_clip = params.pop("label_clip")
     params.update({
         "objective": "regression",
         "metric": "rmse",
         "verbosity": -1
     })
+
+    y_val = clip_extreme_outliers(y_val, threshold=best_clip)
+    y_train = clip_extreme_outliers(y_train, threshold=best_clip)
 
     model = lgb.train(params, lgb.Dataset(X_train_scaled, label=y_train), num_boost_round=400)
 
@@ -495,7 +512,7 @@ def test_train_model_system(item_id):
     baseline_r2 = r2_score(y_val, y_mean)
     print("Baseline R^2:", baseline_r2)
     print(f"RMSE: {rmse}, MAE: {mae}, R^2: {r2}")
-    pred_sign = np.sign(model.predict(X_val))
+    pred_sign = np.sign(model.predict(X_val_scaled))
     true_sign = np.sign(y_val)
     accuracy = np.mean(pred_sign == true_sign)
     print("Sign accuracy:", accuracy)
