@@ -376,14 +376,6 @@ def train_model_system(item_id):
     X = clean_infinite_values(df[feature_cols].values)
     y = df['entry_label'].values
 
-    # Quick label diagnostics
-    try:
-        print(
-            f"{item_id} labels: min={np.min(y):.6f}, med={np.median(y):.6f}, max={np.max(y):.6f}, "
-            f"pos%={(np.mean(y > 0) * 100):.2f}%"
-        )
-    except Exception:
-        pass
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
@@ -583,17 +575,6 @@ def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horiz
         scores.append(y_pred)
         preds.append(row[['timestamp', 'buy_price', 'sell_price', 'entry_score']].to_dict(orient='records')[0])
 
-    # Quick prediction diagnostics
-    if scores:
-        try:
-            s = np.array(scores)
-            print(
-                f"{item_id} scores: min={s.min():.6f}, med={np.median(s):.6f}, max={s.max():.6f}, "
-                f"pos%={(np.mean(s > 0) * 100):.2f}%"
-            )
-        except Exception:
-            pass
-
 
     return preds
 
@@ -602,7 +583,7 @@ def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horiz
 # ANALYZE TOP PREDICTIONS
 # =========================================================
 
-def analyze_entries(pred_list, top_k=5):
+def analyze_entries(pred_list):
     if not pred_list:
         return []
 
@@ -638,7 +619,7 @@ def analyze_entries(pred_list, top_k=5):
 
     enriched.sort(key=lambda x: (x['delta_minutes'], -x['entry_score']))
 
-    return enriched[:top_k]
+    return enriched
 
 
 # =========================================================
@@ -652,4 +633,4 @@ if __name__ == "__main__":
     with open(file_path) as f:
         items = json.load(f)
     for entry in items:
-        test_train_model_system(entry)
+        train_model_system(entry)
