@@ -189,9 +189,23 @@ def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
             continue
             
         # Compute returns for this window
-        returns_horizon = (buy_prices[i:j] * (1 - tax) - entry_price) - initial_gap
-        returns_horizon = returns_horizon / (entry_price + 1e-9)
-        
+        # Compute full forward returns
+        returns_full = (buy_prices[i:j] * (1 - tax) - entry_price) - initial_gap
+        returns_full = returns_full / (entry_price + 1e-9)
+
+        # Time differences
+        time_deltas = ts[i:j] - ts[i]
+
+        # Exclude near-term moves (e.g., first 10 minutes)
+        min_delay = 10 * 60
+        mask = time_deltas > min_delay
+
+        if np.any(mask):
+            returns_horizon = returns_full[mask]
+        else:
+            continue  # skip this index if no valid forward data
+
+
         # Expected return and profit probability
         expected_return[i] = np.median(returns_horizon)
         profit_prob[i] = np.mean(returns_horizon > 0)
@@ -286,15 +300,17 @@ def quantile_loss(y_true, y_pred, alpha):
 # Optuna Objective (Entry Regression)
 # =========================================================
 
-def entry_objective(trial, X, y_raw):
-    clip_thr = trial.suggest_float(
-        "label_clip",
-        0.01,
-        0.5,
-        log=True
-    )
+def entry_objective(trial, X, y):
+    split_idx = int(len(X) * 0.8)
+    X_train, X_val = X[:split_idx], X[split_idx:]
+    y_train, y_val = y[:split_idx], y[split_idx:]
 
-    y = np.clip(y_raw, -clip_thr, clip_thr)
+    clip_thr = trial.suggest_float("label_clip", 0.01, 0.5, log=True)
+    y_train = np.clip(y_train, -clip_thr, clip_thr)
+    y_val = np.clip(y_val, -clip_thr, clip_thr)
+
+    # how much extra penalty for wrong sign
+    sign_penalty = trial.suggest_float("sign_penalty", 1.0, 5.0)
 
     params = {
         "objective": "regression",
@@ -306,14 +322,25 @@ def entry_objective(trial, X, y_raw):
         "verbosity": -1
     }
 
-    dtrain = lgb.Dataset(X, label=y)
+    dtrain = lgb.Dataset(X_train, label=y_train)
     model = lgb.train(params, dtrain, num_boost_round=300)
 
-    preds = model.predict(X)
+    preds = model.predict(X_val)
 
-    sign_acc = np.mean(np.sign(preds) == np.sign(y))
-    clipped_frac = np.mean(np.abs(y_raw) >= clip_thr)
-    return sign_acc - 0.25 * clipped_frac
+    # squared errors
+    sq_errors = (preds - y_val) ** 2
+
+    # identify wrong-sign predictions
+    wrong_sign = np.sign(preds) != np.sign(y_val)
+
+    # apply heavier weight where sign is wrong
+    weights = np.ones_like(sq_errors)
+    weights[wrong_sign] = sign_penalty
+
+    weighted_mse = np.mean(weights * sq_errors)
+    weighted_rmse = np.sqrt(weighted_mse)
+
+    return weighted_rmse
 
 
 
@@ -369,8 +396,18 @@ def train_model_system(item_id):
     else:
         print(f"✗ CSV file for {item_id} does not exist")
         df = generate_csv_files(item_id)
-    
-    exclude = {'timestamp', 'entry_label'}
+
+    future_cols = {
+    'entry_label', 'max_profit', 'max_loss', 'risk_reward',
+    'win_rate_1pct', 'win_rate_2pct',
+    'mae', 'mfe',
+    'profitable_1pct', 'profitable_2pct',
+    'profit_prob',
+    'time_to_first_up', 'time_to_first_down',
+    'time_to_max', 'time_to_min'
+    }
+    exclude = {'timestamp'} | future_cols
+
     feature_cols = [c for c in df.columns if c not in exclude]
 
     X = clean_infinite_values(df[feature_cols].values)
@@ -382,7 +419,7 @@ def train_model_system(item_id):
 
     X_scaled, y = remove_extremes(X_scaled, y, cutoff=0.5)
 
-    study = optuna.create_study(direction="maximize")
+    study = optuna.create_study(direction="minimize")
     study.optimize(lambda t: entry_objective(t, X_scaled, y), n_trials=30)
 
     params = study.best_params
@@ -435,7 +472,17 @@ def test_train_model_system(item_id):
     train_df = df.iloc[:split_idx]
     val_df = df.iloc[split_idx:]
 
-    exclude = {'timestamp', 'entry_label'}
+    future_cols = {
+    'entry_label', 'max_profit', 'max_loss', 'risk_reward',
+    'win_rate_1pct', 'win_rate_2pct',
+    'mae', 'mfe',
+    'profitable_1pct', 'profitable_2pct',
+    'profit_prob',
+    'time_to_first_up', 'time_to_first_down',
+    'time_to_max', 'time_to_min'
+    }
+
+    exclude = {'timestamp'} | future_cols
     feature_cols = [c for c in df.columns if c not in exclude]
 
     X_train = clean_infinite_values(train_df[feature_cols].values)
@@ -480,7 +527,7 @@ def test_train_model_system(item_id):
     print("X_val infs:", np.isinf(X_val).sum())
 
 
-    study = optuna.create_study(direction="maximize")
+    study = optuna.create_study(direction="minimize")
     study.optimize(lambda t: entry_objective(t, X_train_scaled, y_train), n_trials=30)
 
     params = study.best_params
@@ -495,6 +542,17 @@ def test_train_model_system(item_id):
     y_train = clip_extreme_outliers(y_train, threshold=best_clip)
 
     model = lgb.train(params, lgb.Dataset(X_train_scaled, label=y_train), num_boost_round=400)
+    importance_df = pd.DataFrame({
+        "feature": feature_cols,
+        "importance": model.feature_importance(importance_type="gain")
+    }).sort_values("importance", ascending=False)
+
+    print("\nTop 20 Features by Gain:")
+    print(importance_df.head(20))
+
+    corrs = df[feature_cols].corrwith(df['entry_label']).abs().sort_values(ascending=False)
+    print("\nTop correlated features with entry_label:")
+    print(corrs.head(20))
 
     y_pred = model.predict(X_val_scaled)
     rmse = np.sqrt(np.mean((y_pred - y_val)**2))
@@ -512,8 +570,8 @@ def test_train_model_system(item_id):
 
     for k, v in stats.items():
         print(f"{k}: {v*100:.2f}%")
-
-    mask = y_val > 0.1
+    
+    mask = y_val > 0.01
     safe_sign_acc = np.mean((y_pred[mask] > 0) == (y_val[mask] > 0))
 
     tested_metrics_dict["rmse"] = rmse
@@ -633,4 +691,4 @@ if __name__ == "__main__":
     with open(file_path) as f:
         items = json.load(f)
     for entry in items:
-        train_model_system(entry)
+        test_train_model_system(entry)
