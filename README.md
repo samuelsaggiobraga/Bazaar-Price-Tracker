@@ -46,7 +46,7 @@ Key endpoints exposed by `flask_api.py` (exact paths may evolve):
 
 ## In-Web Preview
 
-![Website In Action](file:///Users/samuelbraga/Bazaar%20Price%20Tracker/Screenshot%202026-02-06%20at%204.22.48%E2%80%AFPM.png)
+![Website In Action](/Test_Image.png)
 
 ## Item Artifacts Link
 - Use this link to access data scraped from the start of the Bazaar until about November 2025 (data to be updated later) -> https://huggingface.co/datasets/1amuel/Bazaar-ML-Model
