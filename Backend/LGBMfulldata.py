@@ -386,9 +386,11 @@ def percent_error_stats(y_true, y_pred, eps=1e-9):
 # =========================================================
 
 
-def generate_csv_files(item_id):
+def generate_csv_files(item_id, enable_fetch_if_missing, enable_update_with_new_data):
     mayor_data = get_mayor_perks()
-    data = load_or_fetch_item_data(item_id)
+    data = load_or_fetch_item_data(
+        item_id, enable_fetch_if_missing, enable_update_with_new_data
+    )
     df = prepare_dataframe_from_raw(data, mayor_data)
     df = add_skyblock_time_features(df)
     df = build_lagged_features(df)
@@ -417,7 +419,9 @@ def train_model_system(item_id):
         df = load_entry_targets(item_id)
     else:
         print(f"✗ CSV file for {item_id} does not exist")
-        df = generate_csv_files(item_id)
+        df = generate_csv_files(
+            item_id, True, True
+        )  # enable fetch_if_missing and update_with_new_data
 
     future_cols = {
         "entry_label",
@@ -491,7 +495,9 @@ def test_train_model_system(item_id):
         df = load_entry_targets(item_id)
     else:
         print(f"✗ CSV file for {item_id} does not exist")
-        df = generate_csv_files(item_id)
+        df = generate_csv_files(
+            item_id, True, True
+        )  # enable fetch_if_missing and update_with_new_data
 
     tested_metrics_dict = {
         "rmse": None,
@@ -766,4 +772,4 @@ if __name__ == "__main__":
     with open(file_path) as f:
         items = json.load(f)
     for entry in items:
-        test_train_model_system(entry)
+        train_model_system(entry)
