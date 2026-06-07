@@ -388,10 +388,20 @@ def percent_error_stats(y_true, y_pred, eps=1e-9):
 # =========================================================
 
 
-def generate_csv_files(item_id, enable_fetch_if_missing, enable_update_with_new_data):
+def generate_csv_files(
+    item_id,
+    enable_fetch_if_missing,
+    enable_update_with_new_data,
+    use_compression,
+    use_fast_mode,
+):
     mayor_data = get_mayor_perks()
     data = load_or_fetch_item_data(
-        item_id, enable_fetch_if_missing, enable_update_with_new_data
+        item_id,
+        enable_fetch_if_missing,
+        enable_update_with_new_data,
+        use_compression,
+        use_fast_mode,
     )
     df = prepare_dataframe_from_raw(data, mayor_data)
     df = add_skyblock_time_features(df)
@@ -737,7 +747,7 @@ def predict_entries(
 # =========================================================
 
 
-def analyze_entries(pred_list):
+def analyze_entries(pred_list):  # MISSING top_n=limit PARAMEMETER FROM /investments
     if not pred_list:
         return []
 
