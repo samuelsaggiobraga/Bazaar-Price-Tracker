@@ -1,0 +1,3 @@
+def analyze_entries(pred_list):  # MISSING top_n=limit PARAMEMETER FROM /investments
+Sometimes there is a time format error from fetching coflnet
+use_fast_mode, fetching modes needs dynamic implementation because the proxies will need to be resubscribed
