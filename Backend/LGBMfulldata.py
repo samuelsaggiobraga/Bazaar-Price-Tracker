@@ -21,6 +21,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score
 from Utils.data_utils import load_or_fetch_item_data, parse_timestamp
 from Utils.mayor_utils import get_mayor_perks, match_mayor_perks
+from Utils.load_proxies import load_proxies
+from Utils.data_utils import configure_proxy_pool
 from datetime import datetime, timedelta, timezone
 
 warnings.filterwarnings("ignore")
@@ -411,7 +413,9 @@ def generate_csv_files(item_id, enable_fetch_if_missing, enable_update_with_new_
 # =========================================================
 
 
-def train_model_system(item_id):
+def train_model_system(
+    item_id, fetch_if_missing, update_with_new_data, use_compression, use_fast_mode
+):
     if os.path.exists(
         os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")
     ):
@@ -420,8 +424,12 @@ def train_model_system(item_id):
     else:
         print(f"✗ CSV file for {item_id} does not exist")
         df = generate_csv_files(
-            item_id, True, True
-        )  # enable fetch_if_missing and update_with_new_data
+            item_id,
+            fetch_if_missing,
+            update_with_new_data,
+            use_compression,
+            use_fast_mode,
+        )
 
     future_cols = {
         "entry_label",
@@ -487,7 +495,9 @@ def train_model_system(item_id):
 # =========================================================
 
 
-def test_train_model_system(item_id):
+def test_train_model_system(
+    item_id, fetch_if_missing, update_with_new_data, use_compression, use_fast_mode
+):
     if os.path.exists(
         os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")
     ):
@@ -496,8 +506,12 @@ def test_train_model_system(item_id):
     else:
         print(f"✗ CSV file for {item_id} does not exist")
         df = generate_csv_files(
-            item_id, True, True
-        )  # enable fetch_if_missing and update_with_new_data
+            item_id,
+            fetch_if_missing,
+            update_with_new_data,
+            use_compression,
+            use_fast_mode,
+        )
 
     tested_metrics_dict = {
         "rmse": None,
@@ -766,10 +780,28 @@ def analyze_entries(pred_list):
 # =========================================================
 
 if __name__ == "__main__":
+    fetch_if_missing = True
+    update_with_new_data = True
+    use_compression = True
+    use_fast_mode = (
+        True  # ONLY ENABLE IF YOU USE PROXIES, OR ELSE COFLNET WILL BAN YOUR IP,
+    )
+    # MIGHT NEED TO MAKE IT CONDITIONAL SINCE THE PROXY COULD NEED RESUBSCRIPTION
+
+    # Enable proxy usage to avoid rate limits, can add configuration later
+    proxies = load_proxies("proxies.txt")
+    configure_proxy_pool(proxies)
+
     csv_directory = os.path.join(project_root, "csv files")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(script_dir, "bazaar_full_items_ids.json")
     with open(file_path) as f:
         items = json.load(f)
     for entry in items:
-        train_model_system(entry)
+        train_model_system(
+            entry,
+            fetch_if_missing,
+            update_with_new_data,
+            use_compression,
+            use_fast_mode,
+        )
