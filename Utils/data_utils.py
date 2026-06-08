@@ -172,7 +172,9 @@ def _fetch_chunk(item, start, end):
         proxy = _get_next_proxy()
         proxies = {"http": proxy, "https": proxy} if proxy else None
         resp = _get_session().get(url, timeout=15, proxies=proxies)
-        data = resp.json()
+        data = resp.json(
+            content_type=None
+        )  # Server responded with mimetype: text/json, this is fine since it will throw an exception if it cant parse valid json
 
         if isinstance(data, list):
             return data
@@ -195,7 +197,9 @@ async def _fetch_chunk_async(session, item, start, end, proxy=None, semaphore=No
             async with session.get(
                 url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=15)
             ) as resp:
-                data = await resp.json()
+                data = await resp.json(
+                    content_type=None
+                )  # Server responded with mimetype: text/json, this is fine since it will throw an exception if it cant parse valid json
 
                 if isinstance(data, list):
                     return data
