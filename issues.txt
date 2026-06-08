@@ -1,3 +1,48 @@
 def analyze_entries(pred_list):  # MISSING top_n=limit PARAMEMETER FROM /investments
+
 Sometimes there is a time format error from fetching coflnet
+
 use_fast_mode, fetching modes needs dynamic implementation because the proxies will need to be resubscribed
+
+
+✓ Fetched 125172 total entries
+✓ Added 125172 new entries (total: 862150)
+CPU bottleneck at prepare_dataframe_from_raw() and build_entry_targets() (main culprit) after fetching from the api
+Consider optimizing the code
+
+✦ What you are experiencing is a CPU bottleneck. While your RTX 4070 Super is incredibly fast at training the machine learning model, it is sitting completely idle during that long
+  pause. 
+
+  Here is what is happening: after the code successfully fetches the 862,150 data points from the API, it has to convert that raw JSON data into "features" and "targets" for the
+  machine learning model. This happens entirely on your CPU.
+
+  Where exactly is the bottleneck?
+  If you look inside Backend/LGBMfulldata.py, the delay is coming from these two specific functions:
+
+   1. prepare_dataframe_from_raw(): This function takes the raw JSON data and runs a standard Python for loop over all 862,150 entries to parse timestamps and match Mayor perks.
+      Standard Python loops are notoriously slow for data this large.
+   2. build_entry_targets() (The main culprit): This function calculates the expected profit, maximum loss, and win rates by looking 3 hours into the future for every single row.
+      It runs a for i in range(n): loop 862,150 times. Inside that loop, it slices Numpy arrays to find the maximums and minimums of the future 3-hour window. This is extremely
+      computationally heavy for a single CPU core.
+
+  How to alleviate the bottleneck
+
+  If you want to eliminate this delay, you would need to optimize the Python code to run the math faster. Here are the best ways to do it, ordered from easiest to hardest:
+
+  1. JIT Compilation with Numba (Highly Recommended)
+  The easiest way to make a heavy math loop in Python run 50x faster is to use the numba library. You would isolate the core for loop inside build_entry_targets() into a separate
+  function and add the @njit (No Python Just-In-Time) decorator above it. This compiles your Python math loop directly into C machine code right before it runs, turning a 3-minute
+  freeze into a 3-second calculation.
+
+  2. Vectorization (Pandas / Numpy)
+  Right now, build_entry_targets uses a sliding window inside a Python loop. You could rewrite this math using strictly Pandas rolling windows (e.g.,
+  df['sell_price'].rolling('3h').max()) or Numpy stride tricks. By removing the Python for loop entirely and letting Pandas do the work natively in C, it would process almost
+  instantly.
+
+  3. Multiprocessing
+  Since predicting the targets for row 100 doesn't depend on row 500, you could use Python's multiprocessing or joblib libraries to split the 862,150 rows into 8 or 16 chunks
+  (depending on your CPU's core count) and calculate the math on all your CPU cores simultaneously. 
+
+  4. Downsampling the Data
+  Bazaar prices update constantly, sometimes multiple times a minute. Do you really need to predict the price for every single second? If you group the data into 1-minute or
+  5-minute averages before running build_entry_targets, you would reduce the 862k rows to maybe 150k rows, making the math finish 5x faster.

@@ -24,6 +24,7 @@ from Utils.mayor_utils import get_mayor_perks, match_mayor_perks
 from Utils.load_proxies import load_proxies
 from Utils.data_utils import configure_proxy_pool
 from datetime import datetime, timedelta, timezone
+from numba import njit
 
 warnings.filterwarnings("ignore")
 
@@ -154,16 +155,29 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
     return df
 
 
-def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
-    df = df.copy().sort_values("timestamp").reset_index(drop=True)
-    ts = pd.to_datetime(df["timestamp"]).astype("int64") // 10**9
-    ts = ts.values  # Pure numpy for faster indexing
-    horizon_sec = horizon_minutes * 60
+@njit(nopython=True, fastmath=True, cache=True)
+def _median_jit(arr):
+    sorted_arr = np.sort(arr)
+    n = len(sorted_arr)
+    mid = n // 2
+    return (
+        sorted_arr[mid] if n % 2 != 0 else (sorted_arr[mid - 1] + sorted_arr[mid]) / 2.0
+    )
 
-    buy_prices = df["buy_price"].values
-    sell_prices = df["sell_price"].values
-    n = len(df)
 
+@njit(
+    nopython=True, fastmath=True, cache=True
+)  # Enable jit compilation for performance
+def _compute_targets_jit(
+    df_len,
+    ts,
+    buy_prices,
+    sell_prices,
+    initial_gaps,
+    horizon_sec,
+    tax,
+):
+    n = df_len
     # Pre-allocate all target arrays
     expected_return = np.zeros(n)
     profit_prob = np.zeros(n)
@@ -178,19 +192,16 @@ def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
     win_rate_2pct_list = np.zeros(n)
     mae_list = np.zeros(n)
     mfe_list = np.zeros(n)
-    profitable_1pct_list = np.zeros(n, dtype=int)
-    profitable_2pct_list = np.zeros(n, dtype=int)
+    profitable_1pct_list = np.zeros(n, dtype=np.int64)
+    profitable_2pct_list = np.zeros(n, dtype=np.int64)
 
-    # Pre-compute all returns once
-    initial_gaps = buy_prices * (1 - tax) - sell_prices
-
-    # O(n) sliding window approach
-    j = 0
+    # O(n^2) sliding window approach
     for i in range(n):
         entry_price = sell_prices[i]
         initial_gap = initial_gaps[i]
 
         # Advance right pointer to end of horizon
+        j = i  # Reset each time, the original j=0 outside the loop after the first 36 will get skipped
         while j < n and ts[j] - ts[i] <= horizon_sec:
             j += 1
 
@@ -210,29 +221,36 @@ def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
         min_delay = 10 * 60
         mask = time_deltas > min_delay
 
-        if np.any(mask):
-            returns_horizon = returns_full[mask]
+        # Track the valid indices to map back to the original timestamps
+        valid_indices = np.where(mask)[0]
+
+        if len(valid_indices) > 0:
+            returns_horizon = returns_full[valid_indices]
         else:
-            continue  # skip this index if no valid forward data
+            continue  # Skip this index if no valid data
 
         # Expected return and profit probability
-        expected_return[i] = np.median(returns_horizon)
+        expected_return[i] = _median_jit(
+            returns_horizon
+        )  # Custom implementation due np.median is not compatiple with njit
         profit_prob[i] = np.mean(returns_horizon > 0)
 
         # Time to first up/down
         up_idxs = np.where(returns_horizon > 0)[0]
         down_idxs = np.where(returns_horizon < 0)[0]
         if len(up_idxs) > 0:
-            time_to_first_up[i] = ts[i + up_idxs[0]] - ts[i]
+            # Map through valid_indices
+            time_to_first_up[i] = ts[i + valid_indices[up_idxs[0]]] - ts[i]
         if len(down_idxs) > 0:
-            time_to_first_down[i] = ts[i + down_idxs[0]] - ts[i]
+            time_to_first_down[i] = ts[i + valid_indices[down_idxs[0]]] - ts[i]
 
         # Max/min and their timing
         t_max_rel = np.argmax(returns_horizon)
         t_min_rel = np.argmin(returns_horizon)
 
-        time_to_max[i] = ts[i + t_max_rel] - ts[i]
-        time_to_min[i] = ts[i + t_min_rel] - ts[i]
+        # Map through valid_indices
+        time_to_max[i] = ts[i + valid_indices[t_max_rel]] - ts[i]
+        time_to_min[i] = ts[i + valid_indices[t_min_rel]] - ts[i]
 
         max_profit = returns_horizon[t_max_rel]
         max_loss = returns_horizon[t_min_rel]
@@ -254,6 +272,64 @@ def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
         # Profitability flags
         profitable_1pct_list[i] = int(max_profit >= 0.01)
         profitable_2pct_list[i] = int(max_profit >= 0.02)
+
+    return (
+        expected_return,
+        profit_prob,
+        time_to_first_up,
+        time_to_first_down,
+        time_to_max,
+        time_to_min,
+        max_profit_list,
+        max_loss_list,
+        risk_reward_list,
+        win_rate_1pct_list,
+        win_rate_2pct_list,
+        mae_list,
+        mfe_list,
+        profitable_1pct_list,
+        profitable_2pct_list,
+    )
+
+
+def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
+    df = df.copy().sort_values("timestamp").reset_index(drop=True)
+    ts = pd.to_datetime(df["timestamp"]).astype("int64") // 10**9
+    ts = ts.values  # Pure numpy for faster indexing
+    horizon_sec = horizon_minutes * 60
+
+    buy_prices = df["buy_price"].values
+    sell_prices = df["sell_price"].values
+
+    # Pre-compute all returns once
+    initial_gaps = buy_prices * (1 - tax) - sell_prices
+
+    # Compute the list in C code
+    (
+        expected_return,
+        profit_prob,
+        time_to_first_up,
+        time_to_first_down,
+        time_to_max,
+        time_to_min,
+        max_profit_list,
+        max_loss_list,
+        risk_reward_list,
+        win_rate_1pct_list,
+        win_rate_2pct_list,
+        mae_list,
+        mfe_list,
+        profitable_1pct_list,
+        profitable_2pct_list,
+    ) = _compute_targets_jit(
+        len(df),
+        ts,
+        buy_prices,
+        sell_prices,
+        initial_gaps,
+        horizon_sec,
+        tax,
+    )
 
     # Feature engineering (vectorized)
     returns_last_5min = df["buy_price"].pct_change(periods=5)
