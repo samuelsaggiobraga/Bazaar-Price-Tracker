@@ -21,8 +21,8 @@ project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from LGBMfulldata import predict_entries, analyze_entries
-from Utils.mayor_utils import get_mayor_perks
+from LGBMfulldata import predict_entries, analyze_entries  # noqa: E402
+from Utils.mayor_utils import get_mayor_perks  # noqa: E402
 
 app = Flask(__name__)
 CORS(app)

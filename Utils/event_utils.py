@@ -1,5 +1,4 @@
 from datetime import datetime, timezone, timedelta
-from unicodedata import name
 
 epoch = datetime(2019, 6, 11, 17, 55, tzinfo=timezone.utc)
 time_to_new_year = timedelta(hours=124)
@@ -18,9 +17,9 @@ def find_skyblock_year(timestamp):
     return current_year
 
 
-import pandas as pd
-import numpy as np
-from datetime import datetime, timezone, timedelta
+import pandas as pd  # noqa: E402
+import numpy as np  # noqa: E402
+from datetime import datetime, timezone, timedelta  # noqa: E402
 
 epoch = pd.Timestamp("2019-06-11 17:55", tz="UTC")
 

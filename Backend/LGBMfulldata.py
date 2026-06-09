@@ -8,23 +8,23 @@ project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-import optuna
-import json
-import numpy as np
-import pandas as pd
-import joblib
-import lightgbm as lgb
-import requests
-import warnings
-from Utils.event_utils import add_skyblock_time_features
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import r2_score
-from Utils.data_utils import load_or_fetch_item_data, parse_timestamp
-from Utils.mayor_utils import get_mayor_perks, match_mayor_perks
-from Utils.load_proxies import load_proxies
-from Utils.data_utils import configure_proxy_pool
-from datetime import datetime, timedelta, timezone
-from numba import njit
+import optuna  # noqa: E402
+import json  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import joblib  # noqa: E402
+import lightgbm as lgb  # noqa: E402
+import requests  # noqa: E402
+import warnings  # noqa: E402
+from Utils.event_utils import add_skyblock_time_features  # noqa: E402
+from sklearn.preprocessing import StandardScaler  # noqa: E402
+from sklearn.metrics import r2_score  # noqa: E402
+from Utils.data_utils import load_or_fetch_item_data, parse_timestamp  # noqa: E402
+from Utils.mayor_utils import get_mayor_perks, match_mayor_perks  # noqa: E402
+from Utils.load_proxies import load_proxies  # noqa: E402
+from Utils.data_utils import configure_proxy_pool  # noqa: E402
+from datetime import datetime, timedelta, timezone  # noqa: E402
+from numba import njit  # noqa: E402
 
 warnings.filterwarnings("ignore")
 
@@ -117,13 +117,13 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
     for entry in data:
         try:
             ts = parse_timestamp(entry["timestamp"])
-        except:
+        except Exception:
             continue
 
         def f(k):
             try:
                 return float(entry.get(k, 0))
-            except:
+            except Exception:
                 return 0.0
 
         row = {

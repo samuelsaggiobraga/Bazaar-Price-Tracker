@@ -120,7 +120,7 @@ def find_oldest_available_data(
     Returns:
         datetime: The oldest date with available data, or fallback_date if not found
     """
-    print(f"  → Finding oldest available data...")
+    print("  → Finding oldest available data...")
     base_url = "https://sky.coflnet.com/api/bazaar"
     url = f"{base_url}/{item}/history"
 
@@ -292,7 +292,7 @@ def fetch_all_data(
             _fetch_all_async(item, chunks, _proxy_pool, max_concurrent=len(_proxy_pool))
         )
     elif use_fast_mode:
-        print(f"  → Using FAST MODE without proxies (max 100 concurrent)")
+        print("  → Using FAST MODE without proxies (max 100 concurrent)")
         raw_combined = asyncio.run(
             _fetch_all_async(item, chunks, None, max_concurrent=100)
         )
@@ -360,7 +360,7 @@ def fetch_all_data_fast(
     else:
         print(f"  → FAST MODE: No proxies, {max_concurrent} concurrent requests")
         print(
-            f"  → TIP: Use configure_proxy_pool() for even faster speeds with IP rotation"
+            "  → TIP: Use configure_proxy_pool() for even faster speeds with IP rotation"
         )
         raw_combined = asyncio.run(
             _fetch_all_async(item, chunks, None, max_concurrent=max_concurrent)
@@ -389,7 +389,7 @@ def load_or_fetch_item_data(
 
     if not os.path.exists(filename):
         if fetch_if_missing:
-            print(f"  → No cache found, fetching full history from API...")
+            print("  → No cache found, fetching full history from API...")
             if use_fast_mode:
                 all_data = fetch_all_data_fast(item_id, use_binary_search=True)
             else:
@@ -408,7 +408,7 @@ def load_or_fetch_item_data(
             print(f"  ✗ File {filename} not found")
             return None
 
-    print(f"  → Loading from cache...")
+    print("  → Loading from cache...")
     if use_compression and filename.endswith(".pkl.gz"):
         with gzip.open(filename, "rb") as f:
             data = pickle.load(f)
@@ -423,7 +423,7 @@ def load_or_fetch_item_data(
                 try:
                     latest_timestamp = parse_timestamp(entry["timestamp"])
                     break
-                except:
+                except Exception:
                     continue
 
         if latest_timestamp:
@@ -457,7 +457,7 @@ def load_or_fetch_item_data(
 
                 print(f"  ✓ Added {len(new_data)} new entries (total: {len(data)})")
             else:
-                print(f"  ✓ No new data available")
+                print("  ✓ No new data available")
     else:
         print(f"  ✓ Loaded {len(data)} entries")
 

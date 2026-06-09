@@ -46,3 +46,97 @@ Consider optimizing the code
   4. Downsampling the Data
   Bazaar prices update constantly, sometimes multiple times a minute. Do you really need to predict the price for every single second? If you group the data into 1-minute or
   5-minute averages before running build_entry_targets, you would reduce the 862k rows to maybe 150k rows, making the math finish 5x faster.
+
+
+
+
+  1. Target Computation Array Allocations (Most Severe Processing Bottleneck)
+  The Bottleneck: In Backend/LGBMfulldata.py, the _compute_targets_jit function uses Numba to speed up calculation, but it is slicing arrays and applying boolean masks inside a
+  tight loop:
+
+   1 for i in range(n):
+   2     # ... 
+   3     returns_full = (buy_prices[i:j] * (1 - tax) - entry_price) - initial_gap
+   4     # ...
+   5     mask = time_deltas > min_delay
+   6     valid_indices = np.where(mask)[0]
+  Even with Numba's nopython=True, dynamically allocating arrays (slicing arrays, computing boolean masks, and using np.where) on every single iteration of a loop with hundreds of
+  thousands of rows causes massive memory allocation overhead. This degrades Numba's performance from C-level speeds back down to Python-like speeds.
+
+  The Improvement: Rewrite the inner window logic to use basic scalar variables and secondary while or for loops rather than vectorized NumPy operations. By iterating from i to j
+  manually and tracking the max, min, and sums using primitive variables, you eliminate all heap allocations inside the loop, which will drastically decrease the time it takes to
+  build entry targets.
+
+  2. Sequential Hyperparameter Tuning (Training Bottleneck)
+  The Bottleneck: In train_model_system, you are running an Optuna study with 30 trials per item. Because the main block iterates through bazaar_full_items_ids.json sequentially,
+  you are training 30 LightGBM models sequentially for every single item (20+ items = 600+ sequential model trainings).
+  The Improvement: 
+   - Parallelize Items: Run the train_model_system for different items in parallel using Python's multiprocessing.Pool or concurrent.futures.ProcessPoolExecutor.
+   - Early Stopping: Pass an Optuna Pruning callback into the LightGBM training within entry_objective. This will abort training early for hyperparameter sets that are clearly
+     underperforming, saving significant GPU/CPU time.
+
+  3. API Chunking Strategy (Data Fetching Bottleneck)
+  The Bottleneck: In Utils/data_utils.py, fetch_all_data chunks the historical fetch into 23-hour intervals (interval_seconds=82800). Since bazaar data spans back to 2020, this
+  creates over 1,500 individual chunks/requests per item. While aiohttp and your proxy pool help mitigate the time penalty, spinning up 1,500 asynchronous tasks per item is heavy
+  on both memory and the network, increasing the likelihood of random proxy timeouts.
+  The Improvement: Check if the Coflnet API supports larger fetch windows (e.g., 1 week or 1 month per request). If the API enforces a strict 24-hour limit, implement a persistent
+  local database (like SQLite or DuckDB) instead of dumping compressed pkl.gz files. This allows you to easily query the "last fetched timestamp" and only fetch the delta rather
+  than re-loading massive lists into memory just to append new data.
+
+
+
+✦ Fixing those three bottlenecks will resolve the major speed and performance issues. However, the system won't be fully "good to go" until you address a few critical logic and
+  robustness flaws that will impact model accuracy and data integrity.
+
+  1. Future Data Leakage (Critical Mathematical Flaw)
+  In train_model_system (and test_train_model_system), you apply StandardScaler() to the entire dataset before splitting it into training and validation sets inside the Optuna
+  objective:
+
+   1 scaler = StandardScaler()
+   2 X_scaled = scaler.fit_transform(X) # Looks at the entire timeline
+  This is a textbook data leakage issue. The scaler calculates the mean and variance using the validation data (the future), giving the training set information about future price
+  distributions that it wouldn't have in a real-world scenario.
+  Fix: Split the data into X_train and X_val first, run fit_transform on X_train, and only use transform on X_val.
+
+  2. Silent Data Loss on Proxy Failure (Robustness Flaw)
+  In Utils/data_utils.py, the asynchronous chunk fetcher uses a try/except block that catches proxy connection errors and returns an empty list:
+
+   1 except Exception as e:
+   2     print(f"  ✗ Error fetching {start.strftime('%Y-%m-%d')}: {e}")
+   3     return []
+  Proxies frequently drop connections or timeout. Because you just return [], your dataset will have massive, silent temporal gaps wherever a proxy failed.
+  Fix: Implement an asynchronous retry mechanism (e.g., using tenacity or a custom while loop) that retries a failed chunk with a different proxy until it succeeds, rather than
+  skipping the chunk.
+
+  3. Untapped Numba Parallelism (Extra Performance Win)
+  While removing allocations from _compute_targets_jit will fix the primary overhead, you can still vastly improve its speed by processing the windows concurrently.
+  Fix: Change the Numba decorator to @njit(nopython=True, fastmath=True, cache=True, parallel=True) and replace the outermost loop (for i in range(n):) with Numba's prange(n). This
+  will automatically distribute the target computations across all your CPU cores.
+
+  4. Hardcoded GPU Requirement
+  In the LightGBM parameters, "device_type": "gpu" is strictly hardcoded. If you attempt to run this on a machine (or deploy it to a server) without an OpenCL/CUDA-compatible
+  LightGBM installation, it will either throw a fatal error or print continuous warnings. 
+  Fix: Make the device type configurable or add a try/except fallback that drops back to "cpu".
+
+  ✦ You are absolutely right on both counts—let's clarify those points!
+
+  1. The Existing Append Feature
+  You are 100% correct. The repository does already have the ability to append new data! In Utils/data_utils.py, if update_with_new_data=True, it finds the latest timestamp in the
+  cached file and only fetches the missing chunk. 
+
+  The real bottleneck isn't the network request, it's the file I/O. 
+  Right now, to append just 1 hour of new data, the script has to:
+   1. Decompress and read the entire historical .pkl.gz file into memory (which can be massive).
+   2. Append the tiny new chunk of data to the Python list.
+   3. Re-compress and overwrite the entire massive .pkl.gz file back to the disk.
+
+  As your dataset grows over months or years, rewriting the entire history just to add a few rows becomes incredibly slow and RAM-intensive. A local database like SQLite or DuckDB
+  solves this because you can just INSERT the new rows instantly without ever loading the historical data into memory.
+
+  # MAJOR BOTTLENECKS:
+  - build_entry_targets (Can be further optimized in _compute_targets_jit)
+  - train_model_system (Optimized with running the trials in parralel across all CPU cores, canceling redudant trials early, the model training delegated to GPU)
+  - Compresssing and decompressing pkg.gz in bazaar_data into memory takes significant time for fetching and appendending new entrys. 
+  Consider migrating into a database to avoid the time to compress
+
+  - Consider adding profiling tools to know what to actually optimize (prioritize)
