@@ -211,6 +211,7 @@ def _compute_targets_jit(
 
         # Compute returns for this window
         # Compute full forward returns
+        # These allocate new arrays every iteration — Could be refactor to use buffer instead but not worth readability tradeoff
         returns_full = (buy_prices[i:j] * (1 - tax) - entry_price) - initial_gap
         returns_full = returns_full / (entry_price + 1e-9)
 
@@ -409,7 +410,7 @@ def entry_objective(trial, X, y):
 
     params = {
         "objective": "regression",
-        "device_type": "gpu",
+        "device_type": "cpu",  # Run the trial purely on CPU for parralelization, the actual model training will be on GPU
         "learning_rate": trial.suggest_float("lr", 0.01, 0.15, log=True),
         "num_leaves": trial.suggest_int("num_leaves", 16, 64),
         "feature_fraction": 0.8,
@@ -418,8 +419,32 @@ def entry_objective(trial, X, y):
         "verbosity": -1,
     }
 
+    # Report intermediate scores for pruner to evaluate
+    def pruning_callback(env):
+        # Only start reporting after warmup
+        if env.iteration < 50:
+            return
+        preds = env.model.predict(X_val)
+        sq_errors = (preds - y_val) ** 2
+        wrong_sign = np.sign(preds) != np.sign(y_val)
+        weights = np.ones_like(sq_errors)
+        weights[wrong_sign] = sign_penalty
+        score = np.sqrt(np.mean(weights * sq_errors))
+
+        # Report to optuna
+        trial.report(score, step=env.iteration)
+
+        # Tell optuna to prune if this trial looks bad
+        if trial.should_prune():
+            raise optuna.TrialPruned()
+
     dtrain = lgb.Dataset(X_train, label=y_train)
-    model = lgb.train(params, dtrain, num_boost_round=300)
+    model = lgb.train(
+        params,
+        dtrain,
+        num_boost_round=300,
+        callbacks=[pruning_callback],  # attach pruner
+    )
 
     preds = model.predict(X_val)
 
@@ -546,15 +571,25 @@ def train_model_system(
 
     X_scaled, y = remove_extremes(X_scaled, y, cutoff=0.5)
 
-    study = optuna.create_study(direction="minimize")
-    study.optimize(lambda t: entry_objective(t, X_scaled, y), n_trials=30)
+    study = optuna.create_study(
+        direction="minimize",
+        pruner=optuna.pruners.MedianPruner(
+            n_startup_trials=5,  # wait for 5 complete trials before pruning
+            n_warmup_steps=50,  # matches the warmup in callback
+        ),
+    )
+    study.optimize(
+        lambda t: entry_objective(t, X_scaled, y),
+        n_trials=30,
+        n_jobs=-1,  # Enable trials to run on parralel across all available cores
+    )
 
     params = study.best_params
     best_clip = params.pop("label_clip")
     params.update(
         {
             "objective": "regression",
-            "device_type": "gpu",
+            "device_type": "gpu",  # Model traiing device
             "metric": "rmse",
             "verbosity": -1,
         }
@@ -677,15 +712,25 @@ def test_train_model_system(
     print("X_val NaNs:", np.isnan(X_val).sum())
     print("X_val infs:", np.isinf(X_val).sum())
 
-    study = optuna.create_study(direction="minimize")
-    study.optimize(lambda t: entry_objective(t, X_train_scaled, y_train), n_trials=30)
+    study = optuna.create_study(
+        direction="minimize",
+        pruner=optuna.pruners.MedianPruner(
+            n_startup_trials=5,  # wait for 5 complete trials before pruning
+            n_warmup_steps=50,  # matches the warmup in callback
+        ),
+    )
+    study.optimize(
+        lambda t: entry_objective(t, X_train_scaled, y_train),
+        n_trials=30,
+        n_jobs=-1,  # Enable trials to run on parralel across all available cores
+    )
 
     params = study.best_params
     best_clip = params.pop("label_clip")
     params.update(
         {
             "objective": "regression",
-            "device_type": "gpu",
+            "device_type": "gpu",  # Model traiing device
             "metric": "rmse",
             "verbosity": -1,
         }
