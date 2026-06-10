@@ -2,8 +2,6 @@ def analyze_entries(pred_list):  # MISSING top_n=limit PARAMEMETER FROM /investm
 
 use_fast_mode, fetching modes needs dynamic implementation because the proxies will need to be resubscribed
 
-Risk-aware labeling (path-dependent max/min logic) — ❌ still not implemented in code, entry_label is still median
-
   1. prepare_dataframe_from_raw(): This function takes the raw JSON data and runs a standard Python for loop over all 862,150 entries to parse timestamps and match Mayor perks.
     Standard Python loops are notoriously slow for data this large.
   2. build_entry_targets() (The main culprit): This function calculates the expected profit, maximum loss, and win rates by looking 3 hours into the future for every single row.
@@ -43,4 +41,3 @@ Risk-aware labeling (path-dependent max/min logic) — ❌ still not implemented
   # TODOS:
   - Migrate to a database
   - More performance tweaks(if needed)
-  - Risk-aware labeling implementation

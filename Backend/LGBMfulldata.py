@@ -155,16 +155,6 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
     return df
 
 
-@njit(nopython=True, fastmath=True, cache=True)
-def _median_jit(arr):
-    sorted_arr = np.sort(arr)
-    n = len(sorted_arr)
-    mid = n // 2
-    return (
-        sorted_arr[mid] if n % 2 != 0 else (sorted_arr[mid - 1] + sorted_arr[mid]) / 2.0
-    )
-
-
 @njit(
     nopython=True, fastmath=True, cache=True, parallel=True
 )  # Enable jit compilation for performance
@@ -230,11 +220,24 @@ def _compute_targets_jit(
         else:
             continue  # Skip this index if no valid data
 
-        # Expected return and profit probability
-        expected_return[i] = _median_jit(
-            returns_horizon
-        )  # Custom implementation due np.median is not compatiple with njit
+        # Profit probability
         profit_prob[i] = np.mean(returns_horizon > 0)
+
+        # Max/min and their timing (calculating early to use in labeling logic)
+        t_max_rel = np.argmax(returns_horizon)
+        t_min_rel = np.argmin(returns_horizon)
+
+        max_profit = returns_horizon[t_max_rel]
+        max_loss = returns_horizon[t_min_rel]
+
+        # The Author's Risk-Aware Suggestion Logic
+        if abs(max_loss) > max_profit:
+            expected_return[i] = max_loss
+        else:
+            if t_max_rel < t_min_rel:
+                expected_return[i] = max_profit
+            else:
+                expected_return[i] = max_loss
 
         # Time to first up/down
         up_idxs = np.where(returns_horizon > 0)[0]
@@ -244,10 +247,6 @@ def _compute_targets_jit(
             time_to_first_up[i] = ts[i + valid_indices[up_idxs[0]]] - ts[i]
         if len(down_idxs) > 0:
             time_to_first_down[i] = ts[i + valid_indices[down_idxs[0]]] - ts[i]
-
-        # Max/min and their timing
-        t_max_rel = np.argmax(returns_horizon)
-        t_min_rel = np.argmin(returns_horizon)
 
         # Map through valid_indices
         time_to_max[i] = ts[i + valid_indices[t_max_rel]] - ts[i]
