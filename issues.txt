@@ -31,7 +31,7 @@ use_fast_mode, fetching modes needs dynamic implementation because the proxies w
   Fix: Make the device type configurable or add a try/except fallback that drops back to "cpu".
 
   # MAJOR BOTTLENECKS:
-  - build_entry_targets (Can be further optimized in _compute_targets_jit)
+  - build_entry_targets (Optimized)
   - train_model_system (Optimized with running the trials in parralel across all CPU cores, canceling redudant trials early, the model training delegated to GPU)
   - Compresssing and decompressing pkg.gz in bazaar_data into memory takes significant time for fetching and appendending new entrys. 
   Consider migrating into a database to avoid the time to compress

@@ -185,91 +185,117 @@ def _compute_targets_jit(
     profitable_1pct_list = np.zeros(n, dtype=np.int64)
     profitable_2pct_list = np.zeros(n, dtype=np.int64)
 
+    min_delay = 10 * 60
+
     # O(n^2) sliding window approach
     for i in prange(n):  # Run the loop across all available cores
         entry_price = sell_prices[i]
         initial_gap = initial_gaps[i]
+        start_ts = ts[i]
 
-        # Advance right pointer to end of horizon
-        j = i  # Reset each time, the original j=0 outside the loop after the first 36 will get skipped
-        while j < n and ts[j] - ts[i] <= horizon_sec:
-            j += 1
+        # Initialize tracking variables
+        max_profit = -np.inf
+        max_loss = np.inf
+        t_max_rel_idx = -1
+        t_min_rel_idx = -1
 
-        # Window is [i, j)
-        if j <= i:
+        first_up_idx = -1
+        first_down_idx = -1
+
+        count = 0
+        pos_count = 0
+        win_1pct_count = 0
+        win_2pct_count = 0
+
+        # Advance right pointer to end of horizon using scalar variables
+        for j in range(i, n):
+            time_delta = ts[j] - start_ts
+            if time_delta > horizon_sec:
+                break
+
+            # Exclude near-term moves (e.g., first 10 minutes)
+            if time_delta > min_delay:
+                # Calculate return on the fly (No array slicing)
+                ret = (buy_prices[j] * (1 - tax) - entry_price - initial_gap) / (
+                    entry_price + 1e-9
+                )
+                count += 1
+
+                # Track probabilities
+                if ret > 0:
+                    pos_count += 1
+                    if first_up_idx == -1:
+                        first_up_idx = j
+                if ret < 0:
+                    if first_down_idx == -1:
+                        first_down_idx = j
+
+                # Track max/min and their indices
+                if ret > max_profit:
+                    max_profit = ret
+                    t_max_rel_idx = j
+
+                if ret < max_loss:
+                    max_loss = ret
+                    t_min_rel_idx = j
+
+                # Track win rates
+                if ret >= 0.01:
+                    win_1pct_count += 1
+                if ret >= 0.02:
+                    win_2pct_count += 1
+
+        if count == 0:
             continue
 
-        # Compute returns for this window
-        # Compute full forward returns
-        # These allocate new arrays every iteration — Could be refactor to use buffer instead but not worth readability tradeoff
-        returns_full = (buy_prices[i:j] * (1 - tax) - entry_price) - initial_gap
-        returns_full = returns_full / (entry_price + 1e-9)
+        # Calculate MAE (Max Adverse Excursion) - worst drawdown before peak
+        mae_running = np.inf
+        if t_max_rel_idx != -1:
+            for k in range(i, t_max_rel_idx + 1):
+                time_delta = ts[k] - start_ts
+                if time_delta > min_delay:
+                    ret = (buy_prices[k] * (1 - tax) - entry_price - initial_gap) / (
+                        entry_price + 1e-9
+                    )
+                    if ret < mae_running:
+                        mae_running = ret
 
-        # Time differences
-        time_deltas = ts[i:j] - ts[i]
+        mae_val = mae_running if mae_running != np.inf else 0.0
 
-        # Exclude near-term moves (e.g., first 10 minutes)
-        min_delay = 10 * 60
-        mask = time_deltas > min_delay
-
-        # Track the valid indices to map back to the original timestamps
-        valid_indices = np.where(mask)[0]
-
-        if len(valid_indices) > 0:
-            returns_horizon = returns_full[valid_indices]
-        else:
-            continue  # Skip this index if no valid data
-
-        # Profit probability
-        profit_prob[i] = np.mean(returns_horizon > 0)
-
-        # Max/min and their timing (calculating early to use in labeling logic)
-        t_max_rel = np.argmax(returns_horizon)
-        t_min_rel = np.argmin(returns_horizon)
-
-        max_profit = returns_horizon[t_max_rel]
-        max_loss = returns_horizon[t_min_rel]
-
-        # The Author's Risk-Aware Suggestion Logic
+        # =========================================================
+        # THE AUTHOR'S INTENDED RISK-AWARE LABELING LOGIC
+        # =========================================================
         if abs(max_loss) > max_profit:
             expected_return[i] = max_loss
         else:
-            if t_max_rel < t_min_rel:
+            if t_max_rel_idx < t_min_rel_idx:
                 expected_return[i] = max_profit
             else:
                 expected_return[i] = max_loss
+        # =========================================================
 
-        # Time to first up/down
-        up_idxs = np.where(returns_horizon > 0)[0]
-        down_idxs = np.where(returns_horizon < 0)[0]
-        if len(up_idxs) > 0:
-            # Map through valid_indices
-            time_to_first_up[i] = ts[i + valid_indices[up_idxs[0]]] - ts[i]
-        if len(down_idxs) > 0:
-            time_to_first_down[i] = ts[i + valid_indices[down_idxs[0]]] - ts[i]
+        # Assign calculated values to the pre-allocated arrays
+        profit_prob[i] = pos_count / count
 
-        # Map through valid_indices
-        time_to_max[i] = ts[i + valid_indices[t_max_rel]] - ts[i]
-        time_to_min[i] = ts[i + valid_indices[t_min_rel]] - ts[i]
+        if first_up_idx != -1:
+            time_to_first_up[i] = ts[first_up_idx] - start_ts
+        if first_down_idx != -1:
+            time_to_first_down[i] = ts[first_down_idx] - start_ts
 
-        max_profit = returns_horizon[t_max_rel]
-        max_loss = returns_horizon[t_min_rel]
+        if t_max_rel_idx != -1:
+            time_to_max[i] = ts[t_max_rel_idx] - start_ts
+            time_to_min[i] = ts[t_min_rel_idx] - start_ts
 
         max_profit_list[i] = max_profit
         max_loss_list[i] = max_loss
         risk_reward_list[i] = max_profit / abs(max_loss) if max_loss < 0 else max_profit
 
-        # Win rates
-        win_rate_1pct_list[i] = np.mean(returns_horizon >= 0.01)
-        win_rate_2pct_list[i] = np.mean(returns_horizon >= 0.02)
+        win_rate_1pct_list[i] = win_1pct_count / count
+        win_rate_2pct_list[i] = win_2pct_count / count
 
-        # MAE (Max Adverse Excursion) - worst drawdown before peak
-        mae_list[i] = np.min(returns_horizon[: t_max_rel + 1]) if t_max_rel > 0 else 0.0
-
-        # MFE (Max Favorable Excursion)
+        mae_list[i] = mae_val
         mfe_list[i] = max_profit
 
-        # Profitability flags
         profitable_1pct_list[i] = int(max_profit >= 0.01)
         profitable_2pct_list[i] = int(max_profit >= 0.02)
 
