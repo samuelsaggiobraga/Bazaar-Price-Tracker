@@ -19,7 +19,7 @@ import warnings  # noqa: E402
 from Utils.event_utils import add_skyblock_time_features  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
 from sklearn.metrics import r2_score  # noqa: E402
-from Utils.data_utils import load_or_fetch_item_data, parse_timestamp  # noqa: E402
+from Utils.data_utils import load_or_fetch_item_data  # noqa: E402
 from Utils.mayor_utils import get_mayor_perks, match_mayor_perks  # noqa: E402
 from Utils.load_proxies import load_proxies  # noqa: E402
 from Utils.data_utils import configure_proxy_pool  # noqa: E402
@@ -117,9 +117,17 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
 
     # Load directly into DataFrame
     df = pd.DataFrame(data)
-    
+
     # Ensure required columns exist
-    required_cols = ["timestamp", "buy", "sell", "buyVolume", "sellVolume", "maxBuy", "minBuy"]
+    required_cols = [
+        "timestamp",
+        "buy",
+        "sell",
+        "buyVolume",
+        "sellVolume",
+        "maxBuy",
+        "minBuy",
+    ]
     for col in required_cols:
         if col not in df.columns:
             df[col] = 0.0
@@ -129,12 +137,20 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
     df = df.dropna(subset=["timestamp"])
 
     # Vectorized type conversion (filling NaNs/errors with 0.0)
-    cols_to_float = {"buy": "buy_price", "sell": "sell_price", "buyVolume": "buy_volume", 
-                     "sellVolume": "sell_volume", "maxBuy": "max_buy", "minBuy": "min_buy"}
-    
+    cols_to_float = {
+        "buy": "buy_price",
+        "sell": "sell_price",
+        "buyVolume": "buy_volume",
+        "sellVolume": "sell_volume",
+        "maxBuy": "max_buy",
+        "minBuy": "min_buy",
+    }
+
     for old_col, new_col in cols_to_float.items():
-        df[new_col] = pd.to_numeric(df[old_col], errors="coerce").fillna(0.0).astype(float)
-        
+        df[new_col] = (
+            pd.to_numeric(df[old_col], errors="coerce").fillna(0.0).astype(float)
+        )
+
     df = df.drop(columns=list(cols_to_float.keys()))
 
     if mayor_data is not None:
@@ -142,15 +158,17 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
         # We still need apply here because match_mayor_perks expects individual timestamps,
         # but running it on a Series is much faster than the dict row construction
         # match_mayor_perks expects a datetime object with timezone.utc, so ensure it has timezone info.
-        
+
         # Convert to UTC to match what parse_timestamp did originally
         if df["timestamp"].dt.tz is None:
             dt_series = df["timestamp"].dt.tz_localize(timezone.utc)
         else:
             dt_series = df["timestamp"].dt.tz_convert(timezone.utc)
-            
-        perks_df = dt_series.apply(lambda ts: pd.Series(match_mayor_perks(ts, mayor_data)))
-        
+
+        perks_df = dt_series.apply(
+            lambda ts: pd.Series(match_mayor_perks(ts, mayor_data))
+        )
+
         # Rename columns to mayor_0, mayor_1, etc.
         perks_df.columns = [f"mayor_{i}" for i in range(perks_df.shape[1])]
         df = pd.concat([df, perks_df], axis=1)

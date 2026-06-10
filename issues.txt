@@ -2,30 +2,7 @@ def analyze_entries(pred_list):  # MISSING top_n=limit PARAMEMETER FROM /investm
 
 use_fast_mode, fetching modes needs dynamic implementation because the proxies will need to be resubscribed
 
-  1. prepare_dataframe_from_raw(): This function takes the raw JSON data and runs a standard Python for loop over all 862,150 entries to parse timestamps and match Mayor perks.
-    Standard Python loops are notoriously slow for data this large.
-  2. build_entry_targets() (The main culprit): This function calculates the expected profit, maximum loss, and win rates by looking 3 hours into the future for every single row.
-    It runs a for i in range(n): loop 862,150 times. Inside that loop, it slices Numpy arrays to find the maximums and minimums of the future 3-hour window. This is extremely
-    computationally heavy for a single CPU core.
-
-  3. Target Computation Array Allocations (Most Severe Processing Bottleneck)
-  The Bottleneck: In Backend/LGBMfulldata.py, the _compute_targets_jit function uses Numba to speed up calculation, but it is slicing arrays and applying boolean masks inside a
-  tight loop:
-
-   1 for i in range(n):
-   2     # ... 
-   3     returns_full = (buy_prices[i:j] * (1 - tax) - entry_price) - initial_gap
-   4     # ...
-   5     mask = time_deltas > min_delay
-   6     valid_indices = np.where(mask)[0]
-  Even with Numba's nopython=True, dynamically allocating arrays (slicing arrays, computing boolean masks, and using np.where) on every single iteration of a loop with hundreds of
-  thousands of rows causes massive memory allocation overhead. This degrades Numba's performance from C-level speeds back down to Python-like speeds.
-
-  The Improvement: Rewrite the inner window logic to use basic scalar variables and secondary while or for loops rather than vectorized NumPy operations. By iterating from i to j
-  manually and tracking the max, min, and sums using primitive variables, you eliminate all heap allocations inside the loop, which will drastically decrease the time it takes to
-  build entry targets.
-
-  4. Hardcoded GPU Requirement
+  1. Hardcoded GPU Requirement
   In the LightGBM parameters, "device_type": "gpu" is strictly hardcoded. If you attempt to run this on a machine (or deploy it to a server) without an OpenCL/CUDA-compatible
   LightGBM installation, it will either throw a fatal error or print continuous warnings. 
   Fix: Make the device type configurable or add a try/except fallback that drops back to "cpu".
