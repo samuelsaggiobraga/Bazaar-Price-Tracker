@@ -24,3 +24,4 @@ build/
 
 # Secrets
 proxies.txt
+*.env
