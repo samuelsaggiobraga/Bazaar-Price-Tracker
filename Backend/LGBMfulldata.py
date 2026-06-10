@@ -112,37 +112,49 @@ def build_lagged_features(
 
 
 def prepare_dataframe_from_raw(data, mayor_data=None):
-    rows = []
+    if not data:
+        return pd.DataFrame()
 
-    for entry in data:
-        try:
-            ts = parse_timestamp(entry["timestamp"])
-        except Exception:
-            continue
+    # Load directly into DataFrame
+    df = pd.DataFrame(data)
+    
+    # Ensure required columns exist
+    required_cols = ["timestamp", "buy", "sell", "buyVolume", "sellVolume", "maxBuy", "minBuy"]
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = 0.0
 
-        def f(k):
-            try:
-                return float(entry.get(k, 0))
-            except Exception:
-                return 0.0
+    # Vectorized timestamp parsing
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.dropna(subset=["timestamp"])
 
-        row = {
-            "timestamp": ts,
-            "buy_price": f("buy"),
-            "sell_price": f("sell"),
-            "buy_volume": f("buyVolume"),
-            "sell_volume": f("sellVolume"),
-            "max_buy": f("maxBuy"),
-            "min_buy": f("minBuy"),
-        }
+    # Vectorized type conversion (filling NaNs/errors with 0.0)
+    cols_to_float = {"buy": "buy_price", "sell": "sell_price", "buyVolume": "buy_volume", 
+                     "sellVolume": "sell_volume", "maxBuy": "max_buy", "minBuy": "min_buy"}
+    
+    for old_col, new_col in cols_to_float.items():
+        df[new_col] = pd.to_numeric(df[old_col], errors="coerce").fillna(0.0).astype(float)
+        
+    df = df.drop(columns=list(cols_to_float.keys()))
 
-        if mayor_data is not None:
-            perks = match_mayor_perks(ts, mayor_data)
-            for i, v in enumerate(perks):
-                row[f"mayor_{i}"] = v
-        rows.append(row)
+    if mayor_data is not None:
+        # Vectorized mayor perk matching
+        # We still need apply here because match_mayor_perks expects individual timestamps,
+        # but running it on a Series is much faster than the dict row construction
+        # match_mayor_perks expects a datetime object with timezone.utc, so ensure it has timezone info.
+        
+        # Convert to UTC to match what parse_timestamp did originally
+        if df["timestamp"].dt.tz is None:
+            dt_series = df["timestamp"].dt.tz_localize(timezone.utc)
+        else:
+            dt_series = df["timestamp"].dt.tz_convert(timezone.utc)
+            
+        perks_df = dt_series.apply(lambda ts: pd.Series(match_mayor_perks(ts, mayor_data)))
+        
+        # Rename columns to mayor_0, mayor_1, etc.
+        perks_df.columns = [f"mayor_{i}" for i in range(perks_df.shape[1])]
+        df = pd.concat([df, perks_df], axis=1)
 
-    df = pd.DataFrame(rows)
     if df.empty:
         return df
 
