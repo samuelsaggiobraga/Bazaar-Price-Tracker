@@ -81,6 +81,7 @@ def _get_next_proxy():
 
 
 _rate_limit_lock = threading.Lock()
+_async_rate_limit_lock = asyncio.Lock()
 _requests_made = 0
 _last_reset_time = time.time()
 _max_requests = 30
@@ -102,6 +103,30 @@ def _check_rate_limit():
             if sleep_time > 0:
                 print(f"  → Rate limit: waiting {sleep_time:.1f}s...")
                 time.sleep(sleep_time)
+            _requests_made = 0
+            _last_reset_time = time.time()
+
+        _requests_made += 1
+
+
+async def _async_check_rate_limit():
+    global _requests_made, _last_reset_time
+
+    # Use the async lock
+    async with _async_rate_limit_lock:
+        current_time = time.time()
+
+        if current_time - _last_reset_time >= _window_seconds:
+            _requests_made = 0
+            _last_reset_time = current_time
+
+        if _requests_made >= _max_requests:
+            sleep_time = _window_seconds - (current_time - _last_reset_time)
+            if sleep_time > 0:
+                print(f"  → Rate limit: waiting {sleep_time:.1f}s...")
+                # The crucial fix: This lets the event loop process other tasks while waiting
+                await asyncio.sleep(sleep_time)
+
             _requests_made = 0
             _last_reset_time = time.time()
 
@@ -160,55 +185,84 @@ def find_oldest_available_data(
         return fallback_date
 
 
-def _fetch_chunk(item, start, end):
-    _check_rate_limit()
-
+def _fetch_chunk(item, start, end, max_retries=3):
     base_url = "https://sky.coflnet.com/api/bazaar"
     start_str = start.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
     end_str = end.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
     url = f"{base_url}/{item}/history?start={start_str}&end={end_str}"
 
-    try:
-        proxy = _get_next_proxy()
-        proxies = {"http": proxy, "https": proxy} if proxy else None
-        resp = _get_session().get(url, timeout=15, proxies=proxies)
-        data = resp.json(
-            content_type=None
-        )  # Server responded with mimetype: text/json, this is fine since it will throw an exception if it cant parse valid json
-
-        if isinstance(data, list):
-            return data
-        elif isinstance(data, dict):
-            return [data]
-        return []
-    except Exception as e:
-        print(f"  ✗ Error fetching {start.strftime('%Y-%m-%d')}: {e}")
-        return []
-
-
-async def _fetch_chunk_async(session, item, start, end, proxy=None, semaphore=None):
-    base_url = "https://sky.coflnet.com/api/bazaar"
-    start_str = start.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
-    end_str = end.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
-    url = f"{base_url}/{item}/history?start={start_str}&end={end_str}"
-
-    async with semaphore if semaphore else asyncio.Semaphore(100):
+    for attempt in range(max_retries):
         try:
-            async with session.get(
-                url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=15)
-            ) as resp:
-                data = await resp.json(
-                    content_type=None
-                )  # Server responded with mimetype: text/json, this is fine since it will throw an exception if it cant parse valid json
+            _check_rate_limit()
 
-                if isinstance(data, list):
-                    return data
-                elif isinstance(data, dict):
-                    return [data]
-                return []
-        except Exception as e:
-            print(f"  ✗ Error fetching {start.strftime('%Y-%m-%d')}: {e}")
+            proxy = _get_next_proxy()
+            proxies = {"http": proxy, "https": proxy} if proxy else None
+            resp = _get_session().get(url, timeout=15, proxies=proxies)
+
+            # Check for bad status codes (e.g., 429 Too Many Requests, 502 Bad Gateway)
+            resp.raise_for_status()
+
+            data = resp.json()
+
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict):
+                return [data]
             return []
+
+        except Exception as e:
+            is_last_attempt = attempt == max_retries - 1
+            if is_last_attempt:
+                print(
+                    f"  ✗ Fatal error fetching {start.strftime('%Y-%m-%d')} after {max_retries} attempts: {e}"
+                )
+                return []
+            else:
+                # If using proxies, grab a fresh one from the global cycle for the next attempt
+                if _use_proxies:
+                    proxy = _get_next_proxy()
+
+
+async def _fetch_chunk_async(
+    session, item, start, end, proxy=None, semaphore=None, max_retries=3
+):
+    base_url = "https://sky.coflnet.com/api/bazaar"
+    start_str = start.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
+    end_str = end.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
+    url = f"{base_url}/{item}/history?start={start_str}&end={end_str}"
+
+    async with semaphore:
+        for attempt in range(max_retries):
+            try:
+                await _async_check_rate_limit()
+
+                async with session.get(
+                    url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=20)
+                ) as resp:
+                    # Check for bad status codes (e.g., 429 Too Many Requests, 502 Bad Gateway)
+                    resp.raise_for_status()
+
+                    data = await resp.json(
+                        content_type=None
+                    )  # aiohttp NEEDS the content_type=None bypass
+
+                    if isinstance(data, list):
+                        return data
+                    elif isinstance(data, dict):
+                        return [data]
+                    return []
+
+            except Exception as e:
+                is_last_attempt = attempt == max_retries - 1
+                if is_last_attempt:
+                    print(
+                        f"  ✗ Fatal error fetching {start.strftime('%Y-%m-%d')} after {max_retries} attempts: {e}"
+                    )
+                    return []
+                else:
+                    # If using proxies, grab a fresh one from the global cycle for the next attempt
+                    if _use_proxies:
+                        proxy = _get_next_proxy()
 
 
 async def _fetch_all_async(item, chunks, proxies=None, max_concurrent=100):
@@ -370,6 +424,22 @@ def fetch_all_data_fast(
     return raw_combined
 
 
+# THIS IS THE NEXT BOTTLE NECK
+# Load ENTIRE file into memory
+# data = pickle.load(f)
+
+# Append new entries
+# data.extend(new_data)
+
+# Rewrite ENTIRE file from scratch
+# pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+# PLANNING:
+# Find out the shape of data
+# Design database schema
+# Migrate the data
+# Rewrite the load_or_fetch pipeline
 def load_or_fetch_item_data(
     item_id,
     fetch_if_missing=True,
