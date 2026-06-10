@@ -24,7 +24,7 @@ from Utils.mayor_utils import get_mayor_perks, match_mayor_perks  # noqa: E402
 from Utils.load_proxies import load_proxies  # noqa: E402
 from Utils.data_utils import configure_proxy_pool  # noqa: E402
 from datetime import datetime, timedelta, timezone  # noqa: E402
-from numba import njit  # noqa: E402
+from numba import njit, prange  # noqa: E402
 
 warnings.filterwarnings("ignore")
 
@@ -166,7 +166,7 @@ def _median_jit(arr):
 
 
 @njit(
-    nopython=True, fastmath=True, cache=True
+    nopython=True, fastmath=True, cache=True, parallel=True
 )  # Enable jit compilation for performance
 def _compute_targets_jit(
     df_len,
@@ -196,7 +196,7 @@ def _compute_targets_jit(
     profitable_2pct_list = np.zeros(n, dtype=np.int64)
 
     # O(n^2) sliding window approach
-    for i in range(n):
+    for i in prange(n):  # Run the loop across all available cores
         entry_price = sell_prices[i]
         initial_gap = initial_gaps[i]
 
@@ -397,7 +397,9 @@ def quantile_loss(y_true, y_pred, alpha):
 
 
 def entry_objective(trial, X, y):
-    split_idx = int(len(X) * 0.8)
+    split_idx = int(
+        len(X) * 0.3  # Use only 30% of data for trials, full for final train
+    )
     X_train, X_val = X[:split_idx], X[split_idx:]
     y_train, y_val = y[:split_idx], y[split_idx:]
 
@@ -442,8 +444,8 @@ def entry_objective(trial, X, y):
     model = lgb.train(
         params,
         dtrain,
-        num_boost_round=300,
-        callbacks=[pruning_callback],  # attach pruner
+        num_boost_round=100,  # Reduced from 300 to 100, doesnt affect the accurary much since the final train will determines it
+        callbacks=[pruning_callback],  # Attach pruner
     )
 
     preds = model.predict(X_val)
@@ -566,16 +568,20 @@ def train_model_system(
     X = clean_infinite_values(df[feature_cols].values)
     y = df["entry_label"].values
 
+    # Remove extremes from raw X first
+    X_clean, y_clean = remove_extremes(X, y, cutoff=0.5)
+
+    # Now scaler learns from clean data only
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X_scaled = scaler.fit_transform(X_clean)
+    y = y_clean
 
-    X_scaled, y = remove_extremes(X_scaled, y, cutoff=0.5)
-
+    # Trial runs
     study = optuna.create_study(
         direction="minimize",
         pruner=optuna.pruners.MedianPruner(
-            n_startup_trials=5,  # wait for 5 complete trials before pruning
-            n_warmup_steps=50,  # matches the warmup in callback
+            n_startup_trials=5,  # Wait for 5 complete trials before pruning
+            n_warmup_steps=50,  # Matches the warmup in callback
         ),
     )
     study.optimize(
@@ -586,17 +592,25 @@ def train_model_system(
 
     params = study.best_params
     best_clip = params.pop("label_clip")
+    best_sign_penalty = params.pop(  # noqa: F841
+        "sign_penalty"
+    )  # Remove before passing to lgb
     params.update(
         {
             "objective": "regression",
-            "device_type": "gpu",  # Model traiing device
+            "device_type": "gpu",  # Model training device
             "metric": "rmse",
             "verbosity": -1,
         }
     )
     y = clip_extreme_outliers(y, threshold=best_clip)
 
-    model = lgb.train(params, lgb.Dataset(X_scaled, label=y), num_boost_round=400)
+    # Final train
+    model = lgb.train(
+        params,
+        lgb.Dataset(X_scaled, label=y),
+        num_boost_round=400,  # Full rounds
+    )
     model_dir = os.path.join(project_root, "Model_Files")
     os.makedirs(model_dir, exist_ok=True)
 
@@ -673,12 +687,16 @@ def test_train_model_system(
     X_val = clean_infinite_values(val_df[feature_cols].values)
     y_val = val_df["entry_label"].values
 
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_val_scaled = scaler.transform(X_val)
+    # Remove extremes from raw X first
+    X_train_clean, y_train_clean = remove_extremes(X_train, y_train, cutoff=0.5)
+    X_val_clean, y_val_clean = remove_extremes(X_val, y_val, cutoff=0.5)
 
-    X_train_scaled, y_train = remove_extremes(X_train_scaled, y_train, cutoff=0.5)
-    X_val_scaled, y_val = remove_extremes(X_val_scaled, y_val, cutoff=0.5)
+    # Now scaler learns from clean data only
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train_clean)
+    X_val_scaled = scaler.transform(X_val_clean)
+    y_train = y_train_clean
+    y_val = y_val_clean
 
     print(
         "y_train: min =",
@@ -709,14 +727,16 @@ def test_train_model_system(
         f"y_val: {pos_val / len(y_val) * 100:.1f}% positive, {neg_val / len(y_val) * 100:.1f}% negative"
     )
 
-    print("X_val NaNs:", np.isnan(X_val).sum())
-    print("X_val infs:", np.isinf(X_val).sum())
+    # Check the clean version instead of the pre-cleaned
+    print("X_val NaNs:", np.isnan(X_val_scaled).sum())
+    print("X_val infs:", np.isinf(X_val_scaled).sum())
 
+    # Trial runs
     study = optuna.create_study(
         direction="minimize",
         pruner=optuna.pruners.MedianPruner(
-            n_startup_trials=5,  # wait for 5 complete trials before pruning
-            n_warmup_steps=50,  # matches the warmup in callback
+            n_startup_trials=5,  # Wait for 5 complete trials before pruning
+            n_warmup_steps=50,  # Matches the warmup in callback
         ),
     )
     study.optimize(
@@ -727,10 +747,13 @@ def test_train_model_system(
 
     params = study.best_params
     best_clip = params.pop("label_clip")
+    best_sign_penalty = params.pop(  # noqa: F841
+        "sign_penalty"
+    )  # Remove before passing to lgb
     params.update(
         {
             "objective": "regression",
-            "device_type": "gpu",  # Model traiing device
+            "device_type": "gpu",  # Model training device
             "metric": "rmse",
             "verbosity": -1,
         }
@@ -739,8 +762,11 @@ def test_train_model_system(
     y_val = clip_extreme_outliers(y_val, threshold=best_clip)
     y_train = clip_extreme_outliers(y_train, threshold=best_clip)
 
+    # Final train
     model = lgb.train(
-        params, lgb.Dataset(X_train_scaled, label=y_train), num_boost_round=400
+        params,
+        lgb.Dataset(X_train_scaled, label=y_train),
+        num_boost_round=400,  # Full rounds
     )
     importance_df = pd.DataFrame(
         {
@@ -752,9 +778,10 @@ def test_train_model_system(
     print("\nTop 20 Features by Gain:")
     print(importance_df.head(20))
 
-    corrs = (
-        df[feature_cols].corrwith(df["entry_label"]).abs().sort_values(ascending=False)
+    corrs = train_df[feature_cols].corrwith(
+        train_df["entry_label"]  # Compute on train_df instead of df due to data leakage
     )
+
     print("\nTop correlated features with entry_label:")
     print(corrs.head(20))
 
@@ -785,16 +812,11 @@ def test_train_model_system(
     tested_metrics_dict["percent_error_stats"] = stats
     tested_metrics_dict["safe_sign_accuracy"] = safe_sign_acc
 
-    json.dump(
-        tested_metrics_dict,
-        open(
-            os.path.join(
-                project_root, "Model_Files", f"{item_id}_test_train_metrics.json"
-            ),
-            "w",
-        ),
-        indent=4,
-    )
+    with open(
+        os.path.join(project_root, "Model_Files", f"{item_id}_test_train_metrics.json"),
+        "w",
+    ) as f:
+        json.dump(tested_metrics_dict, f, indent=4)
 
     print("Safe sign accuracy (true positive returns):", safe_sign_acc)
 
