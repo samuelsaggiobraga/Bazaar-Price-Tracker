@@ -400,8 +400,13 @@ def entry_objective(trial, X, y):
     split_idx = int(
         len(X) * 0.3  # Use only 30% of data for trials, full for final train
     )
-    X_train, X_val = X[:split_idx], X[split_idx:]
+    X_train_raw, X_val_raw = X[:split_idx], X[split_idx:]
     y_train, y_val = y[:split_idx], y[split_idx:]
+
+    # Scale AFTER splitting
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train_raw)
+    X_val = scaler.transform(X_val_raw)
 
     clip_thr = trial.suggest_float("label_clip", 0.01, 0.5, log=True)
     y_train = np.clip(y_train, -clip_thr, clip_thr)
@@ -571,11 +576,6 @@ def train_model_system(
     # Remove extremes from raw X first
     X_clean, y_clean = remove_extremes(X, y, cutoff=0.5)
 
-    # Now scaler learns from clean data only
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_clean)
-    y = y_clean
-
     # Trial runs
     study = optuna.create_study(
         direction="minimize",
@@ -585,7 +585,7 @@ def train_model_system(
         ),
     )
     study.optimize(
-        lambda t: entry_objective(t, X_scaled, y),
+        lambda t: entry_objective(t, X_clean, y_clean),
         n_trials=30,
         n_jobs=-1,  # Enable trials to run on parralel across all available cores
     )
@@ -604,6 +604,11 @@ def train_model_system(
         }
     )
     y = clip_extreme_outliers(y, threshold=best_clip)
+
+    # Final train uses 100% of the data, so scale the entire dataset NOW
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_clean)
+    y = clip_extreme_outliers(y_clean, threshold=best_clip)
 
     # Final train
     model = lgb.train(
@@ -740,7 +745,7 @@ def test_train_model_system(
         ),
     )
     study.optimize(
-        lambda t: entry_objective(t, X_train_scaled, y_train),
+        lambda t: entry_objective(t, X_train_clean, y_train),
         n_trials=30,
         n_jobs=-1,  # Enable trials to run on parralel across all available cores
     )
@@ -947,7 +952,10 @@ if __name__ == "__main__":
 
     csv_directory = os.path.join(project_root, "csv files")
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(script_dir, "bazaar_full_items_ids.json")
+    file_path = os.path.join(
+        script_dir,
+        "bazaar_full_items_ids.json",  # Switch between item jsons on training mode change
+    )
     with open(file_path) as f:
         items = json.load(f)
     for entry in items:
