@@ -140,16 +140,21 @@ def find_oldest_available_data(
         fallback_date: Date to use if API call fails (default: Skyblock bazaar launch)
 
     Returns:
-        datetime: The oldest date with available data, or fallback_date if not found
+        datetime: The oldest date with available data, clamped to exactly 1 year ago for non-premium users, or fallback_date if not found
     """
     print("  → Finding oldest available data...")
-    base_url = "https://sky.coflnet.com/api/bazaar"
+    base_url = (
+        "https://sky.coflnet.com/api/bazaar"  # Plug in the API key if you got premium
+    )
     url = f"{base_url}/{item}/history"
 
     try:
         _check_rate_limit()
         resp = _get_session().get(url, timeout=15)
         data = resp.json()
+
+        # Calculate exactly 1 year ago (the paywall limit for non-premium users)
+        one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
 
         if isinstance(data, list) and len(data) > 0:
             oldest_entry = data[-1]
@@ -165,21 +170,25 @@ def find_oldest_available_data(
                     if oldest_date.tzinfo is None:
                         oldest_date = oldest_date.replace(tzinfo=timezone.utc)
 
+                # FORCE THE DATE TO BE NO OLDER THAN 365 DAYS AGO
+                clamped_date = max(oldest_date, one_year_ago)
+
                 print(
-                    f"  ✓ Found data starting from: {oldest_date.strftime('%Y-%m-%d %H:%M:%S')}"
+                    f"  ✓ Found data starting from: {oldest_date.strftime('%Y-%m-%d %H:%M:%S')} (Clamped to {clamped_date.strftime('%Y-%m-%d %H:%M:%S')} due to paywall)"
                 )
-                return oldest_date
+                return clamped_date
 
         print(
-            f"  ⚠ No data found, using fallback: {fallback_date.strftime('%Y-%m-%d')}"
+            f"  ⚠ No data found, using 1-year fallback: {one_year_ago.strftime('%Y-%m-%d')}"
         )
-        return fallback_date
+        return one_year_ago
 
     except Exception as e:
+        one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
         print(
-            f"  ⚠ Error finding oldest data: {e}, using fallback: {fallback_date.strftime('%Y-%m-%d')}"
+            f"  ⚠ Error finding oldest data: {e}, using 1-year fallback: {one_year_ago.strftime('%Y-%m-%d')}"
         )
-        return fallback_date
+        return one_year_ago
 
 
 async def _fetch_chunk_async(
@@ -193,7 +202,8 @@ async def _fetch_chunk_async(
     async with semaphore:
         for attempt in range(max_retries):
             try:
-                await _async_check_rate_limit()
+                if not _use_proxies:  # Single ip
+                    await _async_check_rate_limit()
 
                 async with session.get(
                     url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=20)
