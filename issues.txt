@@ -1,20 +1,11 @@
 def analyze_entries(pred_list):  # MISSING top_n=limit PARAMEMETER FROM /investments
 
-use_fast_mode, fetching modes needs dynamic implementation because the proxies will need to be resubscribed
-
   1. Hardcoded GPU Requirement
   In the LightGBM parameters, "device_type": "gpu" is strictly hardcoded. If you attempt to run this on a machine (or deploy it to a server) without an OpenCL/CUDA-compatible
   LightGBM installation, it will either throw a fatal error or print continuous warnings. 
   Fix: Make the device type configurable or add a try/except fallback that drops back to "cpu".
 
-  # MAJOR BOTTLENECKS:
-  - build_entry_targets (Optimized)
-  - train_model_system (Optimized with running the trials in parralel across all CPU cores, canceling redudant trials early, the model training delegated to GPU)
-  - Compresssing and decompressing pkg.gz in bazaar_data into memory takes significant time for fetching and appendending new entrys. 
-  Consider migrating into a database to avoid the time to compress
-
   - Consider adding profiling tools to know what to actually optimize (prioritize)
 
   # TODOS:
-  - Migrate to a database
   - More performance tweaks(if needed)

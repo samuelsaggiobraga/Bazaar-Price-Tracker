@@ -26,6 +26,7 @@ from Utils.data_utils import configure_proxy_pool  # noqa: E402
 from datetime import datetime, timedelta, timezone  # noqa: E402
 from numba import njit, prange  # noqa: E402
 
+
 warnings.filterwarnings("ignore")
 
 
@@ -555,16 +556,12 @@ def generate_csv_files(
     item_id,
     enable_fetch_if_missing,
     enable_update_with_new_data,
-    use_compression,
-    use_fast_mode,
 ):
     mayor_data = get_mayor_perks()
     data = load_or_fetch_item_data(
         item_id,
         enable_fetch_if_missing,
         enable_update_with_new_data,
-        use_compression,
-        use_fast_mode,
     )
     df = prepare_dataframe_from_raw(data, mayor_data)
     df = add_skyblock_time_features(df)
@@ -586,9 +583,7 @@ def generate_csv_files(
 # =========================================================
 
 
-def train_model_system(
-    item_id, fetch_if_missing, update_with_new_data, use_compression, use_fast_mode
-):
+def train_model_system(item_id, fetch_if_missing, update_with_new_data):
     if os.path.exists(
         os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")
     ):
@@ -600,8 +595,6 @@ def train_model_system(
             item_id,
             fetch_if_missing,
             update_with_new_data,
-            use_compression,
-            use_fast_mode,
         )
 
     future_cols = {
@@ -690,9 +683,7 @@ def train_model_system(
 # =========================================================
 
 
-def test_train_model_system(
-    item_id, fetch_if_missing, update_with_new_data, use_compression, use_fast_mode
-):
+def test_train_model_system(item_id, fetch_if_missing, update_with_new_data):
     if os.path.exists(
         os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")
     ):
@@ -704,8 +695,6 @@ def test_train_model_system(
             item_id,
             fetch_if_missing,
             update_with_new_data,
-            use_compression,
-            use_fast_mode,
         )
 
     tested_metrics_dict = {
@@ -995,11 +984,6 @@ def analyze_entries(pred_list):  # MISSING top_n=limit PARAMEMETER FROM /investm
 if __name__ == "__main__":
     fetch_if_missing = True
     update_with_new_data = True
-    use_compression = True
-    use_fast_mode = (
-        True  # ONLY ENABLE IF YOU USE PROXIES, OR ELSE COFLNET WILL BAN YOUR IP,
-    )
-    # MIGHT NEED TO MAKE IT CONDITIONAL SINCE THE PROXY COULD NEED RESUBSCRIPTION
 
     # Enable proxy usage to avoid rate limits, can add configuration later
     proxies = load_proxies("proxies.txt")
@@ -1018,6 +1002,4 @@ if __name__ == "__main__":
             entry,
             fetch_if_missing,
             update_with_new_data,
-            use_compression,
-            use_fast_mode,
         )

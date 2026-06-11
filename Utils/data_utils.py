@@ -1,15 +1,12 @@
 import requests
-import json
 import time
 from datetime import datetime, timedelta, timezone
 import threading
-import gzip
-import pickle
 import asyncio
 import aiohttp
 from itertools import cycle
 from dateutil import parser
-import os
+from Utils.db import get_item_history, get_latest_timestamp, insert_item_history
 
 
 def parse_timestamp(ts_str):
@@ -185,44 +182,6 @@ def find_oldest_available_data(
         return fallback_date
 
 
-def _fetch_chunk(item, start, end, max_retries=3):
-    base_url = "https://sky.coflnet.com/api/bazaar"
-    start_str = start.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
-    end_str = end.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
-    url = f"{base_url}/{item}/history?start={start_str}&end={end_str}"
-
-    for attempt in range(max_retries):
-        try:
-            _check_rate_limit()
-
-            proxy = _get_next_proxy()
-            proxies = {"http": proxy, "https": proxy} if proxy else None
-            resp = _get_session().get(url, timeout=15, proxies=proxies)
-
-            # Check for bad status codes (e.g., 429 Too Many Requests, 502 Bad Gateway)
-            resp.raise_for_status()
-
-            data = resp.json()
-
-            if isinstance(data, list):
-                return data
-            elif isinstance(data, dict):
-                return [data]
-            return []
-
-        except Exception as e:
-            is_last_attempt = attempt == max_retries - 1
-            if is_last_attempt:
-                print(
-                    f"  ✗ Fatal error fetching {start.strftime('%Y-%m-%d')} after {max_retries} attempts: {e}"
-                )
-                return []
-            else:
-                # If using proxies, grab a fresh one from the global cycle for the next attempt
-                if _use_proxies:
-                    proxy = _get_next_proxy()
-
-
 async def _fetch_chunk_async(
     session, item, start, end, proxy=None, semaphore=None, max_retries=3
 ):
@@ -308,68 +267,12 @@ async def _fetch_all_async(item, chunks, proxies=None, max_concurrent=100):
         return results
 
 
-def fetch_all_data(
+def fetch_all_data_async(
     item,
     start=None,
     end=None,
     interval_seconds=82800,
     use_binary_search=True,
-    use_fast_mode=False,
-):
-    if end is None:
-        end = datetime.now(timezone.utc)
-
-    if start is None and use_binary_search:
-        start = find_oldest_available_data(item)
-    elif start is None:
-        start = datetime(
-            2020, 9, 9, 0, 0, 0, tzinfo=timezone.utc
-        )  # fallback: bazaar launch date
-
-    interval = timedelta(seconds=interval_seconds)
-
-    chunks = []
-    current = start
-    while current + interval <= end:
-        chunks.append((current, current + interval))
-        current += interval
-
-    print(
-        f"  → Fetching {len(chunks)} chunks from {start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}..."
-    )
-
-    if use_fast_mode and _use_proxies:
-        print(
-            f"  → Using FAST MODE with {len(_proxy_pool)} proxies for parallel fetching"
-        )
-        raw_combined = asyncio.run(
-            _fetch_all_async(item, chunks, _proxy_pool, max_concurrent=len(_proxy_pool))
-        )
-    elif use_fast_mode:
-        print("  → Using FAST MODE without proxies (max 100 concurrent)")
-        raw_combined = asyncio.run(
-            _fetch_all_async(item, chunks, None, max_concurrent=100)
-        )
-    else:
-        raw_combined = []
-        for idx, (chunk_start, chunk_end) in enumerate(chunks, 1):
-            if idx % 10 == 0:
-                print(f"  → Progress: {idx}/{len(chunks)} chunks")
-
-            data = _fetch_chunk(item, chunk_start, chunk_end)
-            raw_combined.extend(data)
-
-    print(f"  ✓ Fetched {len(raw_combined)} total entries")
-    return raw_combined
-
-
-def fetch_all_data_fast(
-    item,
-    start=None,
-    end=None,
-    interval_seconds=82800,
-    use_binary_search=True,
-    max_concurrent=None,
 ):
     if end is None:
         end = datetime.now(timezone.utc)
@@ -396,13 +299,15 @@ def fetch_all_data_fast(
     while current + interval <= end:
         chunks.append((current, current + interval))
         current += interval
+    # Catch the remaining tail end of the data
+    if current < end:
+        chunks.append((current, end))
 
     print(
         f"  → Fetching {len(chunks)} chunks from {start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}..."
     )
 
-    if max_concurrent is None:
-        max_concurrent = len(_proxy_pool) if _use_proxies else 100
+    max_concurrent = len(_proxy_pool) if _use_proxies else 100
 
     if _use_proxies:
         print(
@@ -411,127 +316,69 @@ def fetch_all_data_fast(
         raw_combined = asyncio.run(
             _fetch_all_async(item, chunks, _proxy_pool, max_concurrent=max_concurrent)
         )
+        print(f"  ✓ Fetched {len(raw_combined)} total entries")
+        return raw_combined
     else:
-        print(f"  → FAST MODE: No proxies, {max_concurrent} concurrent requests")
-        print(
-            "  → TIP: Use configure_proxy_pool() for even faster speeds with IP rotation"
-        )
+        print("  → SLOW MODE: without proxies (max 100 concurrent)")
         raw_combined = asyncio.run(
             _fetch_all_async(item, chunks, None, max_concurrent=max_concurrent)
         )
-
-    print(f"  ✓ Fetched {len(raw_combined)} total entries")
-    return raw_combined
-
-
-# THIS IS THE NEXT BOTTLE NECK
-# Load ENTIRE file into memory
-# data = pickle.load(f)
-
-# Append new entries
-# data.extend(new_data)
-
-# Rewrite ENTIRE file from scratch
-# pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        print(f"  ✓ Fetched {len(raw_combined)} total entries")
+        return raw_combined
 
 
-# PLANNING:
-# Find out the shape of data
-# Design database schema
-# Migrate the data
-# Rewrite the load_or_fetch pipeline
 def load_or_fetch_item_data(
     item_id,
     fetch_if_missing=True,
     update_with_new_data=False,
-    use_compression=True,
-    use_fast_mode=False,
 ):
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    json_dir = os.path.join(base_dir, "bazaar_data")
+    # Fetch from database
+    print("  → Loading from database...")
+    data = get_item_history(item_id, order_by="ASC")
 
-    os.makedirs(json_dir, exist_ok=True)
-
-    if use_compression:
-        filename = os.path.join(json_dir, f"bazaar_history_{item_id}.pkl.gz")
-    else:
-        filename = os.path.join(json_dir, f"bazaar_history_combined_{item_id}.json")
-
-    if not os.path.exists(filename):
+    # If history is missing
+    # fetch the api and insert them in database
+    if not data:
         if fetch_if_missing:
-            print("  → No cache found, fetching full history from API...")
-            if use_fast_mode:
-                all_data = fetch_all_data_fast(item_id, use_binary_search=True)
-            else:
-                all_data = fetch_all_data(item_id, use_binary_search=True)
+            print("  → No data found, fetching full history from API...")
 
-            if use_compression:
-                with gzip.open(filename, "wb") as f:
-                    pickle.dump(all_data, f, protocol=pickle.HIGHEST_PROTOCOL)
-            else:
-                with open(filename, "w") as f:
-                    json.dump(all_data, f)
+            all_data = fetch_all_data_async(item_id, use_binary_search=True)
+            insert_item_history(item_id, all_data)
 
             print(f"  ✓ Saved {len(all_data)} entries")
-            return all_data
+            return get_item_history(item_id, order_by="ASC")
         else:
-            print(f"  ✗ File {filename} not found")
+            print("  ✗ Data is empty and fetch_if_missing is False ")
             return None
 
-    print("  → Loading from cache...")
-    if use_compression and filename.endswith(".pkl.gz"):
-        with gzip.open(filename, "rb") as f:
-            data = pickle.load(f)
-    else:
-        with open(filename, "r") as f:
-            data = json.load(f)
-
-    if update_with_new_data and data:
-        latest_timestamp = None
-        for entry in reversed(data):
-            if isinstance(entry, dict) and "timestamp" in entry:
-                try:
-                    latest_timestamp = parse_timestamp(entry["timestamp"])
-                    break
-                except Exception:
-                    continue
+    # If history exists and theres new data available,
+    # fetch the api to extend the data and insert them in database
+    if update_with_new_data:
+        latest_timestamp = get_latest_timestamp(item_id)
 
         if latest_timestamp:
             print(
                 f"  → Fetching new data since {latest_timestamp.strftime('%Y-%m-%d')}..."
             )
-            if use_fast_mode:
-                new_data = fetch_all_data_fast(
-                    item_id,
-                    start=latest_timestamp,
-                    end=datetime.now(timezone.utc),
-                    use_binary_search=False,
-                )
-            else:
-                new_data = fetch_all_data(
-                    item_id,
-                    start=latest_timestamp,
-                    end=datetime.now(timezone.utc),
-                    use_binary_search=False,
-                )
+
+            new_data = fetch_all_data_async(
+                item_id,
+                start=latest_timestamp,
+                end=datetime.now(timezone.utc),
+                use_binary_search=False,
+            )
 
             if new_data:
                 data.extend(new_data)
 
-                if use_compression and filename.endswith(".pkl.gz"):
-                    with gzip.open(filename, "wb") as f:
-                        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
-                else:
-                    with open(filename, "w") as f:
-                        json.dump(data, f)
+                insert_item_history(item_id, new_data)
 
                 print(f"  ✓ Added {len(new_data)} new entries (total: {len(data)})")
             else:
                 print("  ✓ No new data available")
-    else:
-        print(f"  ✓ Loaded {len(data)} entries")
 
-    return data
+    print(f"  ✓ Loaded {len(data)} entries")
+    return get_item_history(item_id, order_by="ASC")
 
 
 def fetch_recent_data(item_id, hours=24):
