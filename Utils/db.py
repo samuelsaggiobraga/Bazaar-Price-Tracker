@@ -1,9 +1,7 @@
 import os
-import json
 from psycopg2.extras import RealDictCursor, execute_values
 from psycopg2.pool import SimpleConnectionPool
 from dotenv import load_dotenv
-from pathlib import Path
 
 # Load variables from the .env file into the system environment
 load_dotenv()
@@ -370,19 +368,3 @@ def get_latest_timestamp(item_id):
             get_pool().putconn(connection)
 
     return latest_time
-
-
-if __name__ == "__main__":
-    root = Path(__file__).resolve().parent.parent
-    file_path = os.path.join(
-        root,
-        "Backend",
-        "all_bazaar_items.json",
-    )
-    with open(file_path, "r", encoding="utf-8") as file:
-        # Load and parse the JSON content into a Python dictionary or list
-        data = json.load(file)
-        populate_bazaar_items(data)
-
-    # setup_timescaledb()
-    # drop_timescaledb_tables()
