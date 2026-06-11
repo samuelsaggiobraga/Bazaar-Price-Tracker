@@ -154,30 +154,41 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
 
     df = df.drop(columns=list(cols_to_float.keys()))
 
-    if mayor_data is not None:
-        # Vectorized mayor perk matching
-        # We still need apply here because match_mayor_perks expects individual timestamps,
-        # but running it on a Series is much faster than the dict row construction
-        # match_mayor_perks expects a datetime object with timezone.utc, so ensure it has timezone info.
-
-        # Convert to UTC to match what parse_timestamp did originally
-        if df["timestamp"].dt.tz is None:
-            dt_series = df["timestamp"].dt.tz_localize(timezone.utc)
-        else:
-            dt_series = df["timestamp"].dt.tz_convert(timezone.utc)
-
-        perks_df = dt_series.apply(
-            lambda ts: pd.Series(match_mayor_perks(ts, mayor_data))
-        )
-
-        # Rename columns to mayor_0, mayor_1, etc.
-        perks_df.columns = [f"mayor_{i}" for i in range(perks_df.shape[1])]
-        df = pd.concat([df, perks_df], axis=1)
-
     if df.empty:
         return df
 
+    if df["timestamp"].dt.tz is None:
+        df["timestamp"] = df["timestamp"].dt.tz_localize(timezone.utc)
+    else:
+        df["timestamp"] = df["timestamp"].dt.tz_convert(timezone.utc)
+
     df = df.sort_values("timestamp").reset_index(drop=True)
+
+    if mayor_data is not None and len(mayor_data) > 0:
+        mayor_df = pd.DataFrame(mayor_data)
+        if "start_date" in mayor_df.columns and "perks" in mayor_df.columns:
+            # Expand perks list into columns
+            perks_df = pd.DataFrame(mayor_df["perks"].tolist(), index=mayor_df.index)
+            perks_df.columns = [f"mayor_{i}" for i in range(perks_df.shape[1])]
+
+            mayor_df = pd.concat([mayor_df.drop(columns=["perks"]), perks_df], axis=1)
+            mayor_df["start_date"] = pd.to_datetime(mayor_df["start_date"], utc=True)
+            mayor_df = mayor_df.sort_values("start_date")
+
+            # Vectorized merge
+            df = pd.merge_asof(
+                df,
+                mayor_df,
+                left_on="timestamp",
+                right_on="start_date",
+                direction="backward",
+            )
+            df = df.drop(columns=["start_date"])
+
+            # Fill NaNs for rows before the first mayor start_date
+            mayor_cols = [col for col in df.columns if col.startswith("mayor_")]
+            df[mayor_cols] = df[mayor_cols].fillna(0.0)
+
     df = add_time_features(df)
     df = build_lagged_features(
         df, price_col="buy_price", vol_col="buy_volume", prefix="buy_"
