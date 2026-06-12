@@ -197,8 +197,8 @@ async def _fetch_chunk_async(
     end,
     proxy=None,
     semaphore=None,
-    max_retries=3,
     _async_rate_limit_lock=None,
+    max_retries=3,
 ):
     base_url = "https://sky.coflnet.com/api/bazaar"
     start_str = start.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
@@ -256,26 +256,26 @@ async def _fetch_all_async(item, chunks, proxies=None, max_concurrent=100):
                 proxy = proxies[idx % len(proxies)]
                 tasks.append(
                     _fetch_chunk_async(
-                        session,
-                        item,
-                        chunk_start,
-                        chunk_end,
-                        proxy,
-                        semaphore,
-                        None,  # No need to use lock since the limit of concurrent request is the lenght of the proxies
+                        session=session,
+                        item=item,
+                        start=chunk_start,
+                        end=chunk_end,
+                        proxy=proxy,
+                        semaphore=semaphore,
+                        _async_rate_limit_lock=None,  # No need to use lock since the limit of concurrent request is the lenght of the proxies
                     )
                 )
         else:
             for chunk_start, chunk_end in chunks:
                 tasks.append(
                     _fetch_chunk_async(
-                        session,
-                        item,
-                        chunk_start,
-                        chunk_end,
-                        None,
-                        semaphore,
-                        _async_rate_limit_lock,  # 100 concurrent request if no proxies, lock is needed
+                        session=session,
+                        item=item,
+                        start=chunk_start,
+                        end=chunk_end,
+                        proxy=None,
+                        semaphore=semaphore,
+                        _async_rate_limit_lock=_async_rate_limit_lock,  # 100 concurrent request if no proxies, lock is needed
                     )
                 )
 
