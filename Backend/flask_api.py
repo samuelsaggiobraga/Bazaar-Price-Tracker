@@ -45,7 +45,7 @@ prediction_lock = threading.Lock()
 # ------------------- Utilities -------------------
 
 
-def load_model_artifacts():
+def load_model_artifacts(silent=False):
     """Load existing entry-based model artifacts for all items."""
     global \
         models_dict, \
@@ -54,52 +54,51 @@ def load_model_artifacts():
         mayor_data_cache, \
         model_trained
     try:
-        url = "https://sky.coflnet.com/api/items/bazaar/tags"
-        item_ids = requests.get(url).json()
-
         mayor_data_cache = get_mayor_perks()
         models_dict.clear()
         scalers_dict.clear()
         feature_columns_dict.clear()
 
-        for item_id in item_ids:
-            model_path = os.path.join(SCRIPT_DIR, f"{item_id}_entry_model.pkl")
-            scaler_path = os.path.join(SCRIPT_DIR, f"{item_id}_entry_scaler.pkl")
-            features_path = os.path.join(SCRIPT_DIR, f"{item_id}_entry_features.pkl")
+        if os.path.exists(SCRIPT_DIR):
+            for fname in os.listdir(SCRIPT_DIR):
+                if fname.endswith("_entry_model.pkl"):
+                    item_id = fname.replace("_entry_model.pkl", "")
 
-            if os.path.exists(model_path):
-                models_dict[item_id] = {"model_path": model_path}
-                scalers_dict[item_id] = {"scaler_path": scaler_path}
-                feature_columns_dict[item_id] = {"features_path": features_path}
+                    model_path = os.path.join(SCRIPT_DIR, f"{item_id}_entry_model.pkl")
+                    scaler_path = os.path.join(
+                        SCRIPT_DIR, f"{item_id}_entry_scaler.pkl"
+                    )
+                    features_path = os.path.join(
+                        SCRIPT_DIR, f"{item_id}_entry_features.pkl"
+                    )
+
+                    # Check if all 3 artifacts exist
+                    if (
+                        os.path.exists(model_path)
+                        and os.path.exists(scaler_path)
+                        and os.path.exists(features_path)
+                    ):
+                        models_dict[item_id] = {"model_path": model_path}
+                        scalers_dict[item_id] = {"scaler_path": scaler_path}
+                        feature_columns_dict[item_id] = {"features_path": features_path}
 
         # Only mark the model as ready if we actually found at least one
-        # trained item. The previous check against an empty dict view was
-        # always ``True``.
+        # trained item.
         model_trained = len(models_dict) > 0
-        print(f"✅ Loaded entry-based models: {len(models_dict)} items")
+        if not silent:
+            print(f"✅ Loaded entry-based models: {len(models_dict)} items")
         return model_trained
 
     except Exception as e:
-        print(f"❌ Error loading model artifacts: {e}")
-        traceback.print_exc()
+        if not silent:
+            print(f"❌ Error loading model artifacts: {e}")
+            traceback.print_exc()
         return False
 
 
 def get_available_items():
-    """Return item IDs with downloaded JSON data."""
-    json_dir = SCRIPT_DIR
-    items = []
-    try:
-        if os.path.exists(json_dir):
-            for fname in os.listdir(json_dir):
-                if not fname.endswith("_entry_model.pkl"):
-                    continue
-                item_id = fname.replace("_entry_model.pkl", "")
-                items.append(item_id)
-        return items
-    except Exception as e:
-        print(f"⚠️ Error scanning JSON files: {e}")
-        return []
+    """Return item IDs that are currently loaded and ready for prediction."""
+    return list(models_dict.keys())
 
 
 def load_cached_predictions():
@@ -136,6 +135,9 @@ def background_prediction_loop():
 
     while True:
         try:
+            # Refresh models from disk in case new ones were trained
+            load_model_artifacts(silent=False)
+
             if not model_trained:
                 print("⏳ Waiting for models to load...")
                 time.sleep(10)

@@ -674,9 +674,9 @@ def train_model_system(item_id, fetch_if_missing, update_with_new_data):
     X_clean, y_clean = remove_extremes(X, y, cutoff=0.5)
 
     # === ADD THIS SAFEGUARD ===
-    if len(X_clean) == 0:
+    if len(X_clean) < 50:
         print(
-            f"  ⚠ Skipping {item_id}: Not enough volatile data to train the model (0 rows passed the noise filter)."
+            f"  ⚠ Skipping {item_id}: Not enough volatile data to train the model ({len(X_clean)} rows passed the noise filter, need at least 50)."
         )
         return
 
@@ -695,9 +695,13 @@ def train_model_system(item_id, fetch_if_missing, update_with_new_data):
     )
 
     params = study.best_params
-    best_clip = params.pop("label_clip")
+    if not params:
+        print(f"  ⚠ Skipping {item_id}: Optuna could not find any valid parameters.")
+        return
+
+    best_clip = params.pop("label_clip", 0.25)
     best_sign_penalty = params.pop(  # noqa: F841
-        "sign_penalty"
+        "sign_penalty", 1.0
     )  # Remove before passing to lgb
     params.update(
         {
