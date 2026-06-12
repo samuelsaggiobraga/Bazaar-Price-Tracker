@@ -597,8 +597,11 @@ def generate_csv_files(
     item_id,
     enable_fetch_if_missing,
     enable_update_with_new_data,
+    mayor_data=None,
 ):
-    mayor_data = get_mayor_perks()
+    if mayor_data is None:
+        mayor_data = get_mayor_perks()
+
     data = load_or_fetch_item_data(
         item_id,
         enable_fetch_if_missing,
@@ -624,7 +627,9 @@ def generate_csv_files(
 # =========================================================
 
 
-def train_model_system(item_id, fetch_if_missing, update_with_new_data):
+def train_model_system(
+    item_id, fetch_if_missing, update_with_new_data, mayor_data=None
+):
     if os.path.exists(
         os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")
     ):
@@ -636,6 +641,7 @@ def train_model_system(item_id, fetch_if_missing, update_with_new_data):
             item_id,
             fetch_if_missing,
             update_with_new_data,
+            mayor_data=mayor_data,
         )
 
     future_cols = {
@@ -743,7 +749,9 @@ def train_model_system(item_id, fetch_if_missing, update_with_new_data):
 # =========================================================
 
 
-def test_train_model_system(item_id, fetch_if_missing, update_with_new_data):
+def test_train_model_system(
+    item_id, fetch_if_missing, update_with_new_data, mayor_data=None
+):
     if os.path.exists(
         os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")
     ):
@@ -755,6 +763,7 @@ def test_train_model_system(item_id, fetch_if_missing, update_with_new_data):
             item_id,
             fetch_if_missing,
             update_with_new_data,
+            mayor_data=mayor_data,
         )
 
     tested_metrics_dict = {
@@ -1073,13 +1082,18 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(
         script_dir,
-        "all_bazaar_items.json",  # Switch between item jsons on training mode change
+        "bazaar_full_items_ids.json",  # Switch between item jsons on training mode change
     )
     with open(file_path) as f:
         items = json.load(f)
+
+    print("Fetching mayor data...")
+    global_mayor_data = get_mayor_perks()
+
     for entry in items:
-        train_model_system(
+        test_train_model_system(
             entry,
             fetch_if_missing,
             update_with_new_data,
+            mayor_data=global_mayor_data,
         )
