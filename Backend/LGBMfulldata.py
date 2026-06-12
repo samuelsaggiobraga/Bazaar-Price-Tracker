@@ -436,6 +436,12 @@ def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
     df["time_to_max"] = time_to_max
     df["time_to_min"] = time_to_min
 
+    # === BLACK SWAN FILTER ===
+    # Remove extreme outliers (>200% return) which are likely data artifacts/errors.
+    # These artifacts ruin the regressor's ability to learn normal 1-5% moves.
+    df = df[np.abs(df["entry_label"]) <= 2.0]
+    # =========================
+
     return df
 
 
@@ -657,9 +663,9 @@ def train_model_system(item_id, fetch_if_missing, update_with_new_data):
     y = df["entry_label"].values
 
     # === NOISE FILTER ===
-    # Only keep rows where the actual return was greater than +/- 0.5%
+    # Only keep rows where the actual return was greater than +/- 1.5%
     # This forces the model to learn from actual spikes/crashes, not flatlines.
-    significant_move_mask = np.abs(y) > 0.005
+    significant_move_mask = np.abs(y) > 0.015
     X = X[significant_move_mask]
     y = y[significant_move_mask]
     # ====================
@@ -787,14 +793,14 @@ def test_train_model_system(item_id, fetch_if_missing, update_with_new_data):
     y_val = val_df["entry_label"].values
 
     # === NOISE FILTER ===
-    # Only keep rows where the actual return was greater than +/- 0.5%
+    # Only keep rows where the actual return was greater than +/- 1.5%
     # This prevents the division-by-zero explosions in percent_error_stats
     # and helps the model converge on actual price movements instead of noise.
-    train_mask = np.abs(y_train) > 0.005
+    train_mask = np.abs(y_train) > 0.015
     X_train = X_train[train_mask]
     y_train = y_train[train_mask]
 
-    val_mask = np.abs(y_val) > 0.005
+    val_mask = np.abs(y_val) > 0.015
     X_val = X_val[val_mask]
     y_val = y_val[val_mask]
     # ====================
@@ -1063,12 +1069,12 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(
         script_dir,
-        "bazaar_full_items_ids.json",  # Switch between item jsons on training mode change
+        "all_bazaar_items.json",  # Switch between item jsons on training mode change
     )
     with open(file_path) as f:
         items = json.load(f)
     for entry in items:
-        test_train_model_system(
+        train_model_system(
             entry,
             fetch_if_missing,
             update_with_new_data,
