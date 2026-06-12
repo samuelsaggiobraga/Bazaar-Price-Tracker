@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import json
-
+import sys
 
 percentiles = [
     0.0,
@@ -29,13 +29,19 @@ percentiles = [
 item_percenitle_values = {}
 
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-file_path = os.path.join(script_dir, "bazaar_full_items_ids.json")
-output_file_path = os.path.join(script_dir, "label_clip_values.json")
+# Get the absolute path of the root directory
+repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Add it to the sys.path so Python can find the Utils module
+if repo_root not in sys.path:
+    sys.path.append(repo_root)
+
+file_path = os.path.join(repo_root, "Backend", "bazaar_full_items_ids.json")
+output_file_path = os.path.join(repo_root, "Backend", "label_clip_values.json")
 with open(file_path) as f:
     items = json.load(f)
 for item_id in items:
-    csv_directory = os.path.join(script_dir, "csv files")
+    csv_directory = os.path.join(repo_root, "csv files")
     df_labels = pd.read_csv(
         os.path.join(csv_directory, f"{item_id}_debug_data.csv"),
         parse_dates=["timestamp"],
