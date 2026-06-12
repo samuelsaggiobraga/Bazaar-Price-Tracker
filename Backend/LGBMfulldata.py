@@ -467,8 +467,15 @@ def entry_objective(trial, X, y):
     split_idx = int(
         len(X) * 0.3  # Use only 30% of data for trials, full for final train
     )
+
     X_train_raw, X_val_raw = X[:split_idx], X[split_idx:]
     y_train, y_val = y[:split_idx], y[split_idx:]
+
+    # === FIXED SAFEGUARD ===
+    # Check if either split ended up completely empty
+    if len(X_train_raw) == 0 or len(X_val_raw) == 0:
+        return 9999.0
+    # =======================
 
     # Scale AFTER splitting
     scaler = StandardScaler()
@@ -513,12 +520,29 @@ def entry_objective(trial, X, y):
             raise optuna.TrialPruned()
 
     dtrain = lgb.Dataset(X_train, label=y_train)
-    model = lgb.train(
-        params,
-        dtrain,
-        num_boost_round=100,  # Reduced from 300 to 100, doesnt affect the accurary much since the final train will determines it
-        callbacks=[pruning_callback],  # Attach pruner
-    )
+
+    # === FIXED SAFEGUARD ===
+    # Sometimes extreme hyperparameter combinations (like extreme label_clip)
+    # cause LightGBM to internally reject the dataset and throw a C++ error.
+    # We must catch this specific error and fail the trial safely.
+    try:
+        model = lgb.train(
+            params,
+            dtrain,
+            num_boost_round=100,  # Reduced from 300 to 100, doesnt affect the accurary much since the final train will determines it
+            callbacks=[pruning_callback],  # Attach pruner
+        )
+    except lgb.basic.LightGBMError as e:
+        print(
+            f"  ⚠ Trial failed internally in LightGBM (likely due to extreme clipping): {e}"
+        )
+        return 9999.0
+    except optuna.TrialPruned:
+        raise  # Let Optuna handle its own intentional pruning
+    except Exception as e:
+        print(f"  ⚠ Unexpected error during trial: {e}")
+        return 9999.0
+    # =======================
 
     preds = model.predict(X_val)
 
@@ -632,8 +656,23 @@ def train_model_system(item_id, fetch_if_missing, update_with_new_data):
     X = clean_infinite_values(df[feature_cols].values)
     y = df["entry_label"].values
 
+    # === NOISE FILTER ===
+    # Only keep rows where the actual return was greater than +/- 0.5%
+    # This forces the model to learn from actual spikes/crashes, not flatlines.
+    significant_move_mask = np.abs(y) > 0.005
+    X = X[significant_move_mask]
+    y = y[significant_move_mask]
+    # ====================
+
     # Remove extremes from raw X first
     X_clean, y_clean = remove_extremes(X, y, cutoff=0.5)
+
+    # === ADD THIS SAFEGUARD ===
+    if len(X_clean) == 0:
+        print(
+            f"  ⚠ Skipping {item_id}: Not enough volatile data to train the model (0 rows passed the noise filter)."
+        )
+        return
 
     # Trial runs
     study = optuna.create_study(
@@ -747,9 +786,29 @@ def test_train_model_system(item_id, fetch_if_missing, update_with_new_data):
     X_val = clean_infinite_values(val_df[feature_cols].values)
     y_val = val_df["entry_label"].values
 
+    # === NOISE FILTER ===
+    # Only keep rows where the actual return was greater than +/- 0.5%
+    # This prevents the division-by-zero explosions in percent_error_stats
+    # and helps the model converge on actual price movements instead of noise.
+    train_mask = np.abs(y_train) > 0.005
+    X_train = X_train[train_mask]
+    y_train = y_train[train_mask]
+
+    val_mask = np.abs(y_val) > 0.005
+    X_val = X_val[val_mask]
+    y_val = y_val[val_mask]
+    # ====================
+
     # Remove extremes from raw X first
     X_train_clean, y_train_clean = remove_extremes(X_train, y_train, cutoff=0.5)
     X_val_clean, y_val_clean = remove_extremes(X_val, y_val, cutoff=0.5)
+
+    # === ADD THIS SAFEGUARD ===
+    if len(X_train_clean) == 0 or len(X_val_clean) == 0:
+        print(
+            f"  ⚠ Skipping {item_id}: Not enough volatile data to train the model (0 rows passed the noise filter)."
+        )
+        return
 
     # Now scaler learns from clean data only
     scaler = StandardScaler()
@@ -1009,7 +1068,7 @@ if __name__ == "__main__":
     with open(file_path) as f:
         items = json.load(f)
     for entry in items:
-        train_model_system(
+        test_train_model_system(
             entry,
             fetch_if_missing,
             update_with_new_data,

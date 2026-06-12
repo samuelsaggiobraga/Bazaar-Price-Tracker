@@ -78,7 +78,6 @@ def _get_next_proxy():
 
 
 _rate_limit_lock = threading.Lock()
-_async_rate_limit_lock = asyncio.Lock()
 _requests_made = 0
 _last_reset_time = time.time()
 _max_requests = 30
@@ -106,7 +105,7 @@ def _check_rate_limit():
         _requests_made += 1
 
 
-async def _async_check_rate_limit():
+async def _async_check_rate_limit(_async_rate_limit_lock):
     global _requests_made, _last_reset_time
 
     # Use the async lock
@@ -192,7 +191,14 @@ def find_oldest_available_data(
 
 
 async def _fetch_chunk_async(
-    session, item, start, end, proxy=None, semaphore=None, max_retries=3
+    session,
+    item,
+    start,
+    end,
+    proxy=None,
+    semaphore=None,
+    max_retries=3,
+    _async_rate_limit_lock=None,
 ):
     base_url = "https://sky.coflnet.com/api/bazaar"
     start_str = start.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
@@ -203,7 +209,7 @@ async def _fetch_chunk_async(
         for attempt in range(max_retries):
             try:
                 if not _use_proxies:  # Single ip
-                    await _async_check_rate_limit()
+                    await _async_check_rate_limit(_async_rate_limit_lock)
 
                 async with session.get(
                     url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=20)
@@ -236,6 +242,7 @@ async def _fetch_chunk_async(
 
 async def _fetch_all_async(item, chunks, proxies=None, max_concurrent=100):
     semaphore = asyncio.Semaphore(max_concurrent)
+    _async_rate_limit_lock = asyncio.Lock()
 
     connector = aiohttp.TCPConnector(
         limit=max_concurrent * 2, limit_per_host=max_concurrent, ttl_dns_cache=300
@@ -244,19 +251,31 @@ async def _fetch_all_async(item, chunks, proxies=None, max_concurrent=100):
     async with aiohttp.ClientSession(connector=connector) as session:
         tasks = []
 
-        if proxies and len(proxies) > 0:
+        if _use_proxies:
             for idx, (chunk_start, chunk_end) in enumerate(chunks):
                 proxy = proxies[idx % len(proxies)]
                 tasks.append(
                     _fetch_chunk_async(
-                        session, item, chunk_start, chunk_end, proxy, semaphore
+                        session,
+                        item,
+                        chunk_start,
+                        chunk_end,
+                        proxy,
+                        semaphore,
+                        None,  # No need to use lock since the limit of concurrent request is the lenght of the proxies
                     )
                 )
         else:
             for chunk_start, chunk_end in chunks:
                 tasks.append(
                     _fetch_chunk_async(
-                        session, item, chunk_start, chunk_end, None, semaphore
+                        session,
+                        item,
+                        chunk_start,
+                        chunk_end,
+                        None,
+                        semaphore,
+                        _async_rate_limit_lock,  # 100 concurrent request if no proxies, lock is needed
                     )
                 )
 
