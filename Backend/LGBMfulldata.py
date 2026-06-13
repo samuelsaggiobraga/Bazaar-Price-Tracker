@@ -436,7 +436,7 @@ def load_entry_targets(item_id):
 
 
 def entry_objective(trial, X, y):
-    split_idx = int(len(X) * 0.3)
+    split_idx = int(len(X) * 0.8)
 
     X_train_raw, X_val_raw = X[:split_idx], X[split_idx:]
     y_train, y_val = y[:split_idx], y[split_idx:]
@@ -448,10 +448,15 @@ def entry_objective(trial, X, y):
     X_train = scaler.fit_transform(X_train_raw)
     X_val = scaler.transform(X_val_raw)
 
+    neg_count = np.sum(y_train == 0)
+    pos_count = np.sum(y_train == 1)
+    scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1.0
+
     params = {
         "objective": "binary",
         "device_type": "cpu",
         "metric": "binary_logloss",
+        "scale_pos_weight": scale_pos_weight,
         "learning_rate": trial.suggest_float("lr", 0.01, 0.15, log=True),
         "num_leaves": trial.suggest_int("num_leaves", 16, 64),
         "feature_fraction": 0.8,
@@ -951,7 +956,7 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(
         script_dir,
-        "all_bazaar_items.json",
+        "bazaar_full_items_ids.json",
     )
     with open(file_path) as f:
         items = json.load(f)
@@ -961,7 +966,7 @@ if __name__ == "__main__":
 
     for entry in items:
         # We switch to test_train_model_system here so you can verify the new accuracy metrics
-        train_model_system(
+        test_train_model_system(
             entry,
             fetch_if_missing,
             update_with_new_data,
