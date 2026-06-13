@@ -14,7 +14,6 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import joblib  # noqa: E402
 import lightgbm as lgb  # noqa: E402
-import requests  # noqa: E402
 import warnings  # noqa: E402
 from Utils.event_utils import add_skyblock_time_features  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
@@ -268,7 +267,7 @@ def _compute_targets_jit(
         # We define a 1.5% take profit and 1.5% stop loss threshold
         tp_threshold = 0.015
         sl_threshold = -0.015
-        
+
         final_return = 0.0
         hit_target = False
 
@@ -281,10 +280,10 @@ def _compute_targets_jit(
                 ret = (buy_prices[j] * (1 - tax) - entry_price - initial_gap) / (
                     entry_price + 1e-9
                 )
-                
+
                 if ret < mae_running:
                     mae_running = ret
-                    
+
                 if ret >= tp_threshold:
                     final_return = ret
                     hit_target = True
@@ -293,11 +292,11 @@ def _compute_targets_jit(
                     final_return = ret
                     hit_target = True
                     break
-        
+
         if not hit_target and count > 0:
             # If we never hit TP or SL, our expected return is simply the last return we saw
-            final_return = ret 
-            
+            final_return = ret
+
         mae_val = mae_running if mae_running != np.inf else 0.0
         expected_return[i] = final_return
 
@@ -580,9 +579,13 @@ def train_model_system(
     y = (y_raw >= 0.015).astype(int)
     # =============================
 
-    if np.sum(y) < 50:
+    split_idx = int(len(X) * 0.8)
+    y_train_split = y[:split_idx]
+    y_val_split = y[split_idx:]
+
+    if np.sum(y_train_split) < 20 or np.sum(y_val_split) < 5:
         print(
-            f"  ⚠ Skipping {item_id}: Not enough positive spike examples to train the model ({np.sum(y)} spikes found, need at least 50)."
+            f"  ⚠ Skipping {item_id}: Not enough positive examples in train/val sets (Train: {np.sum(y_train_split)}, Val: {np.sum(y_val_split)})."
         )
         return
 
@@ -706,7 +709,7 @@ def test_train_model_system(
 
     if np.sum(y_train) < 20 or np.sum(y_val) < 5:
         print(
-            f"  ⚠ Skipping {item_id}: Not enough positive examples in train/val sets."
+            f"  ⚠ Skipping {item_id}: Not enough positive examples in train/val sets (Train: {np.sum(y_train)}, Val: {np.sum(y_val)})."
         )
         return
 
@@ -731,6 +734,9 @@ def test_train_model_system(
     )
 
     params = study.best_params
+    if not params:
+        print(f"  ⚠ Skipping {item_id}: Optuna could not find any valid parameters.")
+        return
 
     neg_count = np.sum(y_train == 0)
     pos_count = np.sum(y_train == 1)
@@ -816,10 +822,10 @@ def predict_entries(
     end_str = now.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
     base_url = "https://sky.coflnet.com/api/bazaar"
     url = f"{base_url}/{item_id}/history?start={start_str}&end={end_str}"
-    
+
     from Utils.data_utils import _get_session, _check_rate_limit, _get_next_proxy
     import time
-    
+
     session = _get_session()
     raw = None
     max_retries = 3
@@ -838,7 +844,7 @@ def predict_entries(
                 time.sleep(2)
             else:
                 return []
-                
+
     if not raw:
         return []
 
@@ -945,7 +951,7 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(
         script_dir,
-        "bazaar_full_items_ids.json",
+        "all_bazaar_items.json",
     )
     with open(file_path) as f:
         items = json.load(f)
@@ -955,7 +961,7 @@ if __name__ == "__main__":
 
     for entry in items:
         # We switch to test_train_model_system here so you can verify the new accuracy metrics
-        test_train_model_system(
+        train_model_system(
             entry,
             fetch_if_missing,
             update_with_new_data,
