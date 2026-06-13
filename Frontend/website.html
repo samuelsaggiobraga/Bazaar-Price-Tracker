@@ -469,6 +469,8 @@
         const limit = document.getElementById("limit-input").value || 100;
         const minScore = document.getElementById("min-score-input").value || 0;
 
+        await checkHealth();
+
         tableBody.innerHTML =
           '<tr><td colspan="4" class="loading">LOADING DATA...</td></tr>';
 

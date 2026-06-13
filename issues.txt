@@ -9,8 +9,3 @@ def analyze_entries(pred_list):  # MISSING top_n=limit PARAMEMETER FROM /investm
 
   # TODOS:
   - More performance tweaks(if needed)
-  - Dont run trials if:
-    params = study.best_params
-    if not params:
-        print(f"  ⚠ Skipping {item_id}: Optuna could not find any valid parameters.")
-        return
