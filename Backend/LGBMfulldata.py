@@ -264,25 +264,42 @@ def _compute_targets_jit(
             continue
 
         mae_running = np.inf
-        if t_max_rel_idx != -1:
-            for k in range(i, t_max_rel_idx + 1):
-                time_delta = ts[k] - start_ts
-                if time_delta > min_delay:
-                    ret = (buy_prices[k] * (1 - tax) - entry_price - initial_gap) / (
-                        entry_price + 1e-9
-                    )
-                    if ret < mae_running:
-                        mae_running = ret
+        # Chronological TP / SL check
+        # We define a 1.5% take profit and 1.5% stop loss threshold
+        tp_threshold = 0.015
+        sl_threshold = -0.015
+        
+        final_return = 0.0
+        hit_target = False
 
+        for j in range(i, n):
+            time_delta = ts[j] - start_ts
+            if time_delta > horizon_sec:
+                break
+
+            if time_delta > min_delay:
+                ret = (buy_prices[j] * (1 - tax) - entry_price - initial_gap) / (
+                    entry_price + 1e-9
+                )
+                
+                if ret < mae_running:
+                    mae_running = ret
+                    
+                if ret >= tp_threshold:
+                    final_return = ret
+                    hit_target = True
+                    break
+                elif ret <= sl_threshold:
+                    final_return = ret
+                    hit_target = True
+                    break
+        
+        if not hit_target and count > 0:
+            # If we never hit TP or SL, our expected return is simply the last return we saw
+            final_return = ret 
+            
         mae_val = mae_running if mae_running != np.inf else 0.0
-
-        if abs(max_loss) > max_profit:
-            expected_return[i] = max_loss
-        else:
-            if t_max_rel_idx < t_min_rel_idx:
-                expected_return[i] = max_profit
-            else:
-                expected_return[i] = max_loss
+        expected_return[i] = final_return
 
         profit_prob[i] = pos_count / count
 
@@ -799,7 +816,32 @@ def predict_entries(
     end_str = now.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
     base_url = "https://sky.coflnet.com/api/bazaar"
     url = f"{base_url}/{item_id}/history?start={start_str}&end={end_str}"
-    raw = requests.get(url).json()
+    
+    from Utils.data_utils import _get_session, _check_rate_limit, _get_next_proxy
+    import time
+    
+    session = _get_session()
+    raw = None
+    max_retries = 3
+    for attempt in range(max_retries):
+        _check_rate_limit()
+        proxy_str = _get_next_proxy()
+        proxies = {"http": proxy_str, "https": proxy_str} if proxy_str else None
+        try:
+            resp = session.get(url, proxies=proxies, timeout=10)
+            resp.raise_for_status()
+            raw = resp.json()
+            break
+        except Exception as e:
+            print(f"      → predict_entries fetch failed for {item_id}: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2)
+            else:
+                return []
+                
+    if not raw:
+        return []
+
     df = prepare_dataframe_from_raw(raw, mayor_data)
     if df.empty:
         return []

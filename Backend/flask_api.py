@@ -23,6 +23,8 @@ if project_root not in sys.path:
 
 from LGBMfulldata import predict_entries, analyze_entries  # noqa: E402
 from Utils.mayor_utils import get_mayor_perks  # noqa: E402
+from Utils.load_proxies import load_proxies  # noqa: E402
+from Utils.data_utils import configure_proxy_pool  # noqa: E402
 
 app = Flask(__name__)
 CORS(app)
