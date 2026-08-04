@@ -27,3 +27,6 @@ proxies.txt
 *.env
 # Test venv / scratch
 .venv/
+
+# Random Docs
+docs/
