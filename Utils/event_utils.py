@@ -1,11 +1,11 @@
 from datetime import datetime, timezone, timedelta
-from unicodedata import name
 
 epoch = datetime(2019, 6, 11, 17, 55, tzinfo=timezone.utc)
-time_to_new_year= timedelta(hours = 124)
-time_to_season_of_jerry= timedelta(hours = 113, minutes = 40)
-time_to_jerry_festival = timedelta(hours = 121, minutes =40)
-time_to_spooky_festival = timedelta(hours = 89, minutes = 20)
+time_to_new_year = timedelta(hours=124)
+time_to_season_of_jerry = timedelta(hours=113, minutes=40)
+time_to_jerry_festival = timedelta(hours=121, minutes=40)
+time_to_spooky_festival = timedelta(hours=89, minutes=20)
+
 
 def find_skyblock_year(timestamp):
     global epoch
@@ -16,9 +16,10 @@ def find_skyblock_year(timestamp):
     current_year = 1 + years_passed
     return current_year
 
-import pandas as pd
-import numpy as np
-from datetime import datetime, timezone, timedelta
+
+import pandas as pd  # noqa: E402
+import numpy as np  # noqa: E402
+from datetime import datetime, timezone, timedelta  # noqa: E402
 
 epoch = pd.Timestamp("2019-06-11 17:55", tz="UTC")
 
@@ -42,7 +43,6 @@ def add_skyblock_time_features(df, ts_col="timestamp"):
     spooky_festival_start = current_year_start + time_to_spooky_festival
     spooky_festival_end = spooky_festival_start + pd.Timedelta(hours=1)
 
-
     df["time_to_season_of_jerry_start"] = (
         dt - season_of_jerry_start
     ).dt.total_seconds() / 60.0
@@ -51,21 +51,15 @@ def add_skyblock_time_features(df, ts_col="timestamp"):
         dt - season_of_jerry_end
     ).dt.total_seconds() / 60.0
 
-    df["time_to_jerry_festival_start"] = (
-        dt - jerry_festival_start
-    ).dt.total_seconds()
+    df["time_to_jerry_festival_start"] = (dt - jerry_festival_start).dt.total_seconds()
 
-    df["time_to_jerry_festival_end"] = (
-        dt - jerry_festival_end
-    ).dt.total_seconds()
+    df["time_to_jerry_festival_end"] = (dt - jerry_festival_end).dt.total_seconds()
 
     df["time_to_spooky_festival_start"] = (
         dt - spooky_festival_start
     ).dt.total_seconds()
 
-    df["time_to_spooky_festival_end"] = (
-        dt - spooky_festival_end
-    ).dt.total_seconds()
+    df["time_to_spooky_festival_end"] = (dt - spooky_festival_end).dt.total_seconds()
 
     df["is_during_season_of_jerry"] = (
         (dt >= season_of_jerry_start) & (dt < season_of_jerry_end)
@@ -79,7 +73,6 @@ def add_skyblock_time_features(df, ts_col="timestamp"):
         (dt >= spooky_festival_start) & (dt < spooky_festival_end)
     ).astype(int)
 
-
     minutes = dt.dt.minute
 
     minutes_to_prev_dark = (minutes - 55) % 60
@@ -91,8 +84,6 @@ def add_skyblock_time_features(df, ts_col="timestamp"):
         minutes_to_prev_dark, minutes_to_next_dark
     )
 
-
-
     minutes_to_prev_jc = (minutes - 15) % 60
     minutes_to_next_jc = (15 - minutes) % 60
 
@@ -103,11 +94,3 @@ def add_skyblock_time_features(df, ts_col="timestamp"):
     )
 
     return df
-
-
-
-
-
-
-
-

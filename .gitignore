@@ -21,3 +21,7 @@ csv files/
 *.egg-info/
 dist/
 build/
+
+# Secrets
+proxies.txt
+*.env

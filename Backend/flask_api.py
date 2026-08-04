@@ -15,15 +15,16 @@ import time
 from datetime import datetime, timezone
 import traceback
 import sys
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from LGBMfulldata import (
-    predict_entries, analyze_entries
-)
-from Utils.mayor_utils import get_mayor_perks
+from LGBMfulldata import predict_entries, analyze_entries  # noqa: E402
+from Utils.mayor_utils import get_mayor_perks  # noqa: E402
+from Utils.load_proxies import load_proxies  # noqa: E402
+from Utils.data_utils import configure_proxy_pool  # noqa: E402
 
 app = Flask(__name__)
 CORS(app)
@@ -31,70 +32,75 @@ CORS(app)
 SCRIPT_DIR = os.path.join(project_root, "Model_Files")
 
 # Global artifacts
-models_dict = {}          # {item_id: trained_model}
-scalers_dict = {}         # {item_id: scaler}
-feature_columns_dict = {} # {item_id: list_of_features}
+models_dict = {}  # {item_id: trained_model}
+scalers_dict = {}  # {item_id: scaler}
+feature_columns_dict = {}  # {item_id: list_of_features}
 mayor_data_cache = None
 model_trained = False
 
 # Cached predictions
 cached_predictions = {}
-predictions_file = os.path.join(SCRIPT_DIR, 'predictions_cache.json')
+predictions_file = os.path.join(SCRIPT_DIR, "predictions_cache.json")
 prediction_lock = threading.Lock()
 
 
 # ------------------- Utilities -------------------
 
-def load_model_artifacts():
-    """Load existing entry-based model artifacts for all items."""
-    global models_dict, scalers_dict, feature_columns_dict, mayor_data_cache, model_trained
-    try:
-        url = "https://sky.coflnet.com/api/items/bazaar/tags"
-        item_ids = requests.get(url).json()
 
+def load_model_artifacts(silent=False):
+    """Load existing entry-based model artifacts for all items."""
+    global \
+        models_dict, \
+        scalers_dict, \
+        feature_columns_dict, \
+        mayor_data_cache, \
+        model_trained
+    try:
         mayor_data_cache = get_mayor_perks()
         models_dict.clear()
         scalers_dict.clear()
         feature_columns_dict.clear()
 
-        for item_id in item_ids:
-            model_path = os.path.join(SCRIPT_DIR, f'{item_id}_entry_model.pkl')
-            scaler_path = os.path.join(SCRIPT_DIR, f'{item_id}_entry_scaler.pkl')
-            features_path = os.path.join(SCRIPT_DIR, f'{item_id}_entry_features.pkl')
+        if os.path.exists(SCRIPT_DIR):
+            for fname in os.listdir(SCRIPT_DIR):
+                if fname.endswith("_entry_model.pkl"):
+                    item_id = fname.replace("_entry_model.pkl", "")
 
-            if os.path.exists(model_path):
-                models_dict[item_id] = {"model_path": model_path}
-                scalers_dict[item_id] = {"scaler_path": scaler_path}
-                feature_columns_dict[item_id] = {"features_path": features_path}
+                    model_path = os.path.join(SCRIPT_DIR, f"{item_id}_entry_model.pkl")
+                    scaler_path = os.path.join(
+                        SCRIPT_DIR, f"{item_id}_entry_scaler.pkl"
+                    )
+                    features_path = os.path.join(
+                        SCRIPT_DIR, f"{item_id}_entry_features.pkl"
+                    )
+
+                    # Check if all 3 artifacts exist
+                    if (
+                        os.path.exists(model_path)
+                        and os.path.exists(scaler_path)
+                        and os.path.exists(features_path)
+                    ):
+                        models_dict[item_id] = {"model_path": model_path}
+                        scalers_dict[item_id] = {"scaler_path": scaler_path}
+                        feature_columns_dict[item_id] = {"features_path": features_path}
 
         # Only mark the model as ready if we actually found at least one
-        # trained item. The previous check against an empty dict view was
-        # always ``True``.
+        # trained item.
         model_trained = len(models_dict) > 0
-        print(f"✅ Loaded entry-based models: {len(models_dict)} items")
+        if not silent:
+            print(f"✅ Loaded entry-based models: {len(models_dict)} items")
         return model_trained
 
     except Exception as e:
-        print(f"❌ Error loading model artifacts: {e}")
-        traceback.print_exc()
+        if not silent:
+            print(f"❌ Error loading model artifacts: {e}")
+            traceback.print_exc()
         return False
 
 
 def get_available_items():
-    """Return item IDs with downloaded JSON data."""
-    json_dir = SCRIPT_DIR
-    items = []
-    try:
-        if os.path.exists(json_dir):
-            for fname in os.listdir(json_dir):
-                if not fname.endswith("_entry_model.pkl"):
-                    continue
-                item_id = fname.replace("_entry_model.pkl", "")
-                items.append(item_id)
-        return items
-    except Exception as e:
-        print(f"⚠️ Error scanning JSON files: {e}")
-        return []
+    """Return item IDs that are currently loaded and ready for prediction."""
+    return list(models_dict.keys())
 
 
 def load_cached_predictions():
@@ -102,7 +108,7 @@ def load_cached_predictions():
     global cached_predictions
     try:
         if os.path.exists(predictions_file):
-            with open(predictions_file, 'r') as f:
+            with open(predictions_file, "r") as f:
                 cached_predictions = json.load(f)
         else:
             cached_predictions = {}
@@ -115,13 +121,14 @@ def save_cached_predictions():
     """Save predictions to file."""
     try:
         with prediction_lock:
-            with open(predictions_file, 'w') as f:
+            with open(predictions_file, "w") as f:
                 json.dump(cached_predictions, f, indent=2)
     except Exception as e:
         print(f"⚠️ Error saving cached predictions: {e}")
 
 
 # ------------------- Background Prediction Loop -------------------
+
 
 def background_prediction_loop():
     """Continuously update cached entry predictions."""
@@ -130,6 +137,9 @@ def background_prediction_loop():
 
     while True:
         try:
+            # Refresh models from disk in case new ones were trained
+            load_model_artifacts(silent=False)
+
             if not model_trained:
                 print("⏳ Waiting for models to load...")
                 time.sleep(10)
@@ -144,20 +154,24 @@ def background_prediction_loop():
                 try:
                     model = joblib.load(models_dict[item_id]["model_path"])
                     scaler = joblib.load(scalers_dict[item_id]["scaler_path"])
-                    features = joblib.load(feature_columns_dict[item_id]["features_path"])
+                    features = joblib.load(
+                        feature_columns_dict[item_id]["features_path"]
+                    )
                     mayor_data = mayor_data_cache
 
                     if not model or not scaler or not features:
                         continue
 
-                    prediction_df = predict_entries(model, scaler, features, item_id, mayor_data)
+                    prediction_df = predict_entries(
+                        model, scaler, features, item_id, mayor_data
+                    )
                     ranked_entries = analyze_entries(prediction_df)
 
                     with prediction_lock:
                         cached_predictions[item_id] = {
-                            'item_id': item_id,
-                            'timestamp': datetime.now(timezone.utc).isoformat(),
-                            'entries': ranked_entries
+                            "item_id": item_id,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "entries": ranked_entries,
                         }
 
                 except Exception as e:
@@ -176,50 +190,57 @@ def background_prediction_loop():
 
 # ------------------- Flask Endpoints -------------------
 
+
 @app.before_request
 def ensure_model_loaded():
     """Return 503 if models not loaded."""
     global model_trained
-    if not model_trained and request.endpoint not in ['health', 'root']:
-        return jsonify({'error': 'Model not ready', 'message': 'Server initializing'}), 503
+    if not model_trained and request.endpoint not in ["health", "root"]:
+        return jsonify(
+            {"error": "Model not ready", "message": "Server initializing"}
+        ), 503
 
 
-@app.route('/')
+@app.route("/")
 def root():
-    return jsonify({
-        'name': 'Bazaar Entry Prediction API',
-        'version': '1.0.0',
-        'model_ready': model_trained,
-        'endpoints': {
-            'health': '/health',
-            'items': '/items',
-            'predict': '/predict/<item_id>',
-            'predictions': '/predictions',
-            'investments': '/investments'
+    return jsonify(
+        {
+            "name": "Bazaar Entry Prediction API",
+            "version": "1.0.0",
+            "model_ready": model_trained,
+            "endpoints": {
+                "health": "/health",
+                "items": "/items",
+                "predict": "/predict/<item_id>",
+                "predictions": "/predictions",
+                "investments": "/investments",
+            },
         }
-    })
+    )
 
 
-@app.route('/health')
+@app.route("/health")
 def health_check():
-    return jsonify({
-        'status': 'healthy',
-        'model_trained': model_trained,
-        'timestamp': datetime.now(timezone.utc).isoformat()
-    })
+    return jsonify(
+        {
+            "status": "healthy",
+            "model_trained": model_trained,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    )
 
 
-@app.route('/items')
+@app.route("/items")
 def get_items():
     try:
         url = "https://sky.coflnet.com/api/items/bazaar/tags"
         items = requests.get(url).json()
-        return jsonify({'items': items, 'count': len(items)})
+        return jsonify({"items": items, "count": len(items)})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 
-@app.route('/predict/<item_id>')
+@app.route("/predict/<item_id>")
 def predict_single(item_id):
     try:
         model = joblib.load(models_dict[item_id]["model_path"])
@@ -228,22 +249,24 @@ def predict_single(item_id):
         mayor_data = mayor_data_cache
 
         if not model or not scaler or not features:
-            return jsonify({'error': 'Model not found for this item'}), 404
+            return jsonify({"error": "Model not found for this item"}), 404
 
         df_pred = predict_entries(model, scaler, features, item_id, mayor_data)
         ranked_entries = analyze_entries(df_pred)
 
-        return jsonify({
-            'item_id': item_id,
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'entries': ranked_entries
-        })
-    
+        return jsonify(
+            {
+                "item_id": item_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "entries": ranked_entries,
+            }
+        )
+
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 
-@app.route('/predictions')
+@app.route("/predictions")
 def get_cached():
     """Return best upcoming positive entry per item for homescreen ranking.
 
@@ -257,8 +280,8 @@ def get_cached():
     (smallest ``delta_minutes`` first), then by ``entry_score``.
     """
     try:
-        limit = int(request.args.get('limit', 100))
-        min_score = float(request.args.get('min_score', 0.0))
+        limit = int(request.args.get("limit", 100))
+        min_score = float(request.args.get("min_score", 0.0))
 
         with prediction_lock:
             preds = list(cached_predictions.values())
@@ -267,23 +290,23 @@ def get_cached():
         now = datetime.now(timezone.utc)
 
         for p in preds:
-            item_id = p.get('item_id')
-            entries = p.get('entries') or []
+            item_id = p.get("item_id")
+            entries = p.get("entries") or []
             if not item_id or not entries:
                 continue
 
             # Entries from analyze_entries are already positive and sorted by
             # delta_minutes ascending; take the closest one.
             best = entries[0]
-            score = float(best.get('entry_score', 0.0))
+            score = float(best.get("entry_score", 0.0))
             if score <= min_score:
                 continue
 
             # Ensure we have a usable delta_minutes; if missing, recompute
             # defensively from the timestamp.
-            delta_minutes = best.get('delta_minutes')
+            delta_minutes = best.get("delta_minutes")
             if delta_minutes is None:
-                ts_str = best.get('timestamp')
+                ts_str = best.get("timestamp")
                 if ts_str:
                     try:
                         ts = datetime.fromisoformat(ts_str)
@@ -293,44 +316,48 @@ def get_cached():
                 else:
                     continue
 
-            ranked_items.append({
-                'item_id': item_id,
-                'timestamp': best.get('timestamp'),
-                'buy_price': best.get('buy_price'),
-                'sell_price': best.get('sell_price'),
-                'entry_score': score,
-                'delta_minutes': float(delta_minutes),
-            })
+            ranked_items.append(
+                {
+                    "item_id": item_id,
+                    "timestamp": best.get("timestamp"),
+                    "buy_price": best.get("buy_price"),
+                    "sell_price": best.get("sell_price"),
+                    "entry_score": score,
+                    "delta_minutes": float(delta_minutes),
+                }
+            )
 
         # Sort by time-to-entry, then by score
-        ranked_items.sort(key=lambda x: (x['delta_minutes'], -x['entry_score']))
+        ranked_items.sort(key=lambda x: (x["delta_minutes"], -x["entry_score"]))
 
-        return jsonify({'items': ranked_items[:limit], 'total': len(ranked_items)})
+        return jsonify({"items": ranked_items[:limit], "total": len(ranked_items)})
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 
-@app.route('/investments')
+@app.route("/investments")
 def best_investments():
     try:
-        limit = int(request.args.get('limit', 10))
+        limit = int(request.args.get("limit", 10))
         with prediction_lock:
             preds = list(cached_predictions.values())
 
         investments = analyze_entries(preds, top_n=limit)
-        return jsonify({
-            'investments': investments,
-            'total': len(investments),
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        })
+        return jsonify(
+            {
+                "investments": investments,
+                "total": len(investments),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 
 # ------------------- Startup -------------------
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print("🚀 Starting Entry-Based Bazaar Prediction Server")
 
     if load_model_artifacts():
@@ -344,4 +371,4 @@ if __name__ == '__main__':
     t.start()
     print("✅ Background prediction thread started")
 
-    app.run(host='0.0.0.0', port=5001, debug=False)
+    app.run(host="0.0.0.0", port=5001, debug=False)

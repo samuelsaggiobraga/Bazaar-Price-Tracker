@@ -1,478 +1,547 @@
 [
-{
-"start_date": "2020-09-09",
-"mayor_perks": ["Lucky!"]
-},
-{
-"start_date": "2020-09-14",
-"mayor_perks": ["Fishing XP Buff"]
-},
-{
-"start_date": "2020-09-19",
-"mayor_perks": ["Sweet Benevolence", "Extra Event"]
-},
-{
-"start_date": "2020-09-24",
-"mayor_perks": ["Prospection", "Mining XP Buff"]
-},
-{
-"start_date": "2020-09-30",
-"mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
-},
-{
-"start_date": "2020-10-05",
-"mayor_perks": ["null"]
-},
-{
-"start_date": "2020-10-10",
-"mayor_perks": ["Mythological Ritual", "Sharing is Caring", "Pet XP Buff", "Lucky!"]
-},
-{
-"start_date": "2020-10-15",
-"mayor_perks": ["Marauder", "EZPZ"]
-},
-{
-"start_date": "2020-10-20",
-"mayor_perks": ["Bribe", "Darker Auctions"]
-},
-{
-"start_date": "2020-10-25",
-"mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
-},
-{
-"start_date": "2020-10-31",
-"mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
-},
-{
-"start_date": "2020-11-05",
-"mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
-},
-{
-"start_date": "2020-11-10",
-"mayor_perks": ["Marauder", "EZPZ", "Benediction"]
-},
-{
-"start_date": "2020-11-15",
-"mayor_perks": ["Prospection", "Mining XP Buff", "Mining Fiesta", "Molten Forge"]
-},
-{
-"start_date": "2020-11-20",
-"mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
-},
-{
-"start_date": "2020-11-25",
-"mayor_perks": ["Lucky!", "Mythological Ritual"]
-},
-{
-"start_date": "2020-12-01",
-"mayor_perks": ["QUAD TAXES!!!", "TURBO MINIONS!!!", "DOUBLE MOBS HP!!!", "MOAR SKILLZ!!!"]
-},
-{
-"start_date": "2020-12-06",
-"mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0", "Fishing Festival"]
-},
-{
-"start_date": "2020-12-11",
-"mayor_perks": ["SLASHED Pricing", "Slayer XP Buff", "Pathfinder"]
-},
-{
-"start_date": "2020-12-16",
-"mayor_perks": ["Marauder", "EZPZ"]
-},
-{
-"start_date": "2020-12-21",
-"mayor_perks": ["Prospection"]
-},
-{
-"start_date": "2020-12-26",
-"mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
-},
-{
-"start_date": "2021-01-01",
-"mayor_perks": ["Lucky!"]
-},
-{
-"start_date": "2021-01-06",
-"mayor_perks": ["SLASHED Pricing", "Slayer XP Buff", "Pathfinder"]
-},
-{
-"start_date": "2021-01-11",
-"mayor_perks": ["Perkpocalypse", "Statspocalypse", "Jerrypocalypse"]
-},
-{
-"start_date": "2021-01-16",
-"mayor_perks": ["Prospection", "Mining XP Buff"]
-},
-{
-"start_date": "2021-01-21",
-"mayor_perks": ["Marauder", "EZPZ", "Benediction"]
-},
-{
-"start_date": "2021-01-26",
-"mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0", "Fishing Festival"]
-},
-{
-"start_date": "2021-02-01",
-"mayor_perks": ["Prospection"]
-},
-{
-"start_date": "2021-02-06",
-"mayor_perks": ["Lucky!", "Mythological Ritual", "Pet XP Buff", "Sharing is Caring"]
-},
-{
-"start_date": "2021-02-11",
-"mayor_perks": ["Fishing XP Buff", "Fishing Festival", "Luck of the Sea 2.0"]
-},
-{
-"start_date": "2021-02-16",
-"mayor_perks": ["SLASHED Pricing", "Slayer XP Buff", "Pathfinder"]
-},
-{
-"start_date": "2021-02-21",
-"mayor_perks": ["Bribe", "Darker Auctions"]
-},
-{
-"start_date": "2021-02-26",
-"mayor_perks": ["Lucky!", "Mythological Ritual", "Pet XP Buff", "Sharing is Caring"]
-},
-{
-"start_date": "2021-03-04",
-"mayor_perks": ["Marauder", "EZPZ", "Benediction"]
-},
-{
-"start_date": "2021-03-09",
-"mayor_perks": ["Sweet Benevolence", "A Time for Giving", "Extra Event"]
-},
-{
-"start_date": "2021-03-14",
-"mayor_perks": ["Fishing XP Buff", "Fishing Festival", "Luck of the Sea 2.0"]
-},
-{
-"start_date": "2021-03-19",
-"mayor_perks": ["Marauder", "EZPZ", "Benediction"]
-},
-{
-"start_date": "2021-03-24",
-"mayor_perks": ["Prospection", "Mining Fiesta", "Mining XP Buff"]
-},
-{
-"start_date": "2021-03-29",
-"mayor_perks": ["SLASHED Pricing", "Slayer XP Buff", "Pathfinder"]
-},
-{
-"start_date": "2021-04-05",
-"mayor_perks": ["null"]
-},
-{
-"start_date": "2021-04-09",
-"mayor_perks": ["null"]
-},
-{
-"start_date": "2021-04-16",
-"mayor_perks": ["null"]
-},
-{
-"start_date": "2021-04-19",
-"mayor_perks": ["null"]
-},
-{
-"start_date": "2021-04-24",
-"mayor_perks": ["Lucky!", "Mythological Ritual", "Pet XP Buff", "Sharing is Caring"]
-},
-{
-"start_date": "2021-04-29",
-"mayor_perks": ["Marauder", "EZPZ", "Benediction"]
-},
-{
-"start_date": "2021-05-05",
-"mayor_perks": ["Fishing Festival", "Fishing XP Buff", "Luck of the Sea 2.0"]
-},
-{
-"start_date": "2021-05-10",
-"mayor_perks": ["A Time for Giving", "Sweet Benevolence", "Extra Event"]
-},
-{
-"start_date": "2021-05-15",
-"mayor_perks": ["Jerrypocalypse", "Statspocalypse", "Perkpocalypse"]
-},
-{
-"start_date": "2021-05-20",
-"mayor_perks": ["Pathfinder", "Slayer XP Buff", "SLASHED Pricing"]
-},
-{
-"start_date": "2021-05-25",
-"mayor_perks": ["Marauder", "Benediction", "EZPZ"]
-},
-{
-"start_date": "2021-05-30",
-"mayor_perks": ["Mythological Ritual", "Pet XP Buff", "Sharing is Caring"]
-},
-{
-"start_date": "2021-06-05",
-"mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
-},
-{
-"start_date": "2021-06-10",
-"mayor_perks": ["SLASHED Pricing"]
-},
-{
-"start_date": "2021-06-15",
-"mayor_perks": ["Marauder", "EZPZ"]
-},
-{
-"start_date": "2021-06-20",
-"mayor_perks": ["Lucky!", "Mythological Ritual"]
-},
-{
-"start_date": "2021-06-25",
-"mayor_perks": ["Bribe", "Darker Auctions"]
-},
-{
-"start_date": "2021-06-30",
-"mayor_perks": ["Pet XP Buff", "Mythological Ritual"]
-},
-{
-"start_date": "2021-07-06",
-"mayor_perks": ["Fishing XP Buff","Luck of the Sea 2.0","Fishing Festival"]
-},
-{
-"start_date": "2021-07-11",
-"mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
-},
-{
-"start_date": "2021-07-16",
-"mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
-},
-{
-"start_date": "2021-07-21",
-"mayor_perks": ["Mythological Ritual", "Pet XP Buff", "Sharing is Caring"]
-},
-{
-"start_date": "2021-07-26",
-"mayor_perks": ["Marauder", "EZPZ"]
-},
-{
-"start_date": "2021-07-31",
-"mayor_perks": ["Pathfinder", "Slayer XP Buff", "SLASHED Pricing"]
-},
-{
-"start_date": "2021-08-06",
-"mayor_perks": ["MOAR SKILLZ!!!", "DOUBLE MOBS HP!!!", "TURBO MINIONS!!!", "QUAD TAXES!!!"]
-},
-{
-"start_date": "2021-08-11",
-"mayor_perks": ["Mining Fiesta", "Mining XP Buff", "Prospection"]
-},
-{
-"start_date": "2021-08-16",
-"mayor_perks": ["Lucky!", "Mythological Ritual"]
-},
-{
-"start_date": "2021-08-21",
-"mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
-},
-{
-"start_date": "2021-08-26",
-"mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
-},
-{
-"start_date": "2021-08-31",
-"mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
-},
-{
-"start_date": "2021-09-06",
-"mayor_perks": ["Marauder", "EZPZ"]
-},
-{
-"start_date": "2021-09-11",
-"mayor_perks": ["Mythological Ritual","Lucky!", "Pet XP Buff"]
-},
-{
-"start_date": "2021-09-16",
-"mayor_perks": ["Perkpocalypse", "Statspocalypse", "Jerrypocalypse"]
-},
-{
-"start_date": "2021-09-21",
-"mayor_perks": ["Mining Fiesta","Mining XP Buff", "Prospection"]
-},
-{
-"start_date": "2021-09-26",
-"mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
-},
-{
-"start_date": "2021-10-01",
-"mayor_perks": ["Lucky!", "Mythological Ritual"]
-},
-{
-"start_date": "2021-10-07",
-"mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
-},
-{
-"start_date": "2021-10-12",
-"mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
-},
-{
-"start_date": "2021-10-17",
-"mayor_perks": ["Marauder", "EZPZ"]
-},
-{
-"start_date": "2021-10-22",
-"mayor_perks": ["SLASHED Pricing"]
-},
-{
-"start_date": "2021-10-27",
-"mayor_perks": ["Bribe", "Darker Auctions"]
-},
-{
-"start_date": "2021-11-01",
-"mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
-},
-{
-"start_date": "2021-11-07",
-"mayor_perks": ["Lucky!", "Mythological Ritual", "Pet XP Buff"]
-},
-{
-"start_date": "2021-11-12",
-"mayor_perks": ["Sweet Benevolence", "Extra Event"]
-},
-{
-"start_date": "2021-11-17",
-"mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
-},
-{
-"start_date": "2021-11-22",
-"mayor_perks": ["Marauder", "EZPZ"]
-},
-{
-"start_date": "2021-11-27",
-"mayor_perks": ["Lucky!", "Mythological Ritual"]
-},
-{
-"start_date": "2021-12-03",
-"mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
-},
-{
-"start_date": "2021-12-08",
-"mayor_perks": ["MOAR SKILLZ!!!", "DOUBLE MOBS HP!!!", "TURBO MINIONS!!!", "QUAD TAXES!!!" ]
-},
-{
-"start_date": "2021-12-13",
-"mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
-},
-{
-"start_date": "2021-12-18",
-"mayor_perks": ["Lucky!", "Mythological Ritual"]
-},
-{
-"start_date": "2021-12-23",
-"mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
-},
-{
-"start_date": "2021-12-28",
-"mayor_perks": ["Mining XP Buff", "Prospection"]
-},
-{
-"start_date": "2022-01-02",
-"mayor_perks": ["SLASHED Pricing"]
-},
-{
-"start_date": "2022-01-08",
-"mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
-},
-{
-"start_date": "2022-01-13",
-"mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
-},
-{
-"start_date": "2022-01-18",
-"mayor_perks": ["Jerrypocalypse", "Statspocalypse", "Perkpocalypse"]
-},
-{
-"start_date": "2022-01-23",
-"mayor_perks": ["Marauder", "EZPZ"]
-},
-{
-"start_date": "2022-01-28",
-"mayor_perks": ["Lucky!", "Mythological Ritual"]
-},
-{
-"start_date": "2022-02-02",
-"mayor_perks": ["Marauder"]
-},
-{
-"start_date": "2022-02-08",
-"mayor_perks": ["null"]
-},
-{
-"start_date": "2022-02-13",
-"mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
-},
-{
-"start_date": "2022-02-18",
-"mayor_perks": ["null"]
-},
-{
-"start_date": "2022-02-23",
-"mayor_perks": ["Fishing XP Buff"]
-},
-{
-"start_date": "2022-02-28",
-"mayor_perks": ["Bribe", "Darker Auctions"]
-},
-{
-"start_date": "2022-03-05",
-"mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
-},
-{
-"start_date": "2022-03-11",
-"mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
-},
-{
-"start_date": "2022-03-16",
-"mayor_perks": ["Marauder", "EZPZ"]
-},
-{
-"start_date": "2022-03-21",
-"mayor_perks": ["Prospection", "Mining Fiesta", "Mining XP Buff"]
-},
-{
-"start_date": "2022-03-26",
-"mayor_perks": ["Lucky!", "Mythological Ritual", "Pet XP Buff"]
-},
-{
-"start_date": "2022-03-31",
-"mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
-},
-{
-"start_date": "2022-04-05",
-"mayor_perks": ["SLASHED Pricing"]
-},
-{
-"start_date": "2022-04-11",
-"mayor_perks": ["MOAR SKILLZ!!!", "DOUBLE MOBS HP!!!", "TURBO MINIONS!!!", "QUAD TAXES!!!"]
-},
-{
-"start_date": "2022-04-16",
-"mayor_perks": ["SLASHED Pricing"]
-},
-{
-"start_date": "2022-04-21",
-"mayor_perks": ["Lucky!", "Mythological Ritual"]
-},
-{
-"start_date": "2022-04-26",
-"mayor_perks": ["Prospection", "Mining XP Buff"]
-},
-{
-"start_date": "2022-05-01",
-"mayor_perks": ["SLASHED Pricing"]
-},
-{
-"start_date": "2022-05-06",
-"mayor_perks": ["Lucky!", "Mythological Ritual"]
-},
-{
-"start_date": "2022-05-12",
-"mayor_perks": ["Marauder", "EZPZ"]
-}
+  {
+    "start_date": "2020-09-09",
+    "mayor_perks": ["Lucky!"]
+  },
+  {
+    "start_date": "2020-09-14",
+    "mayor_perks": ["Fishing XP Buff"]
+  },
+  {
+    "start_date": "2020-09-19",
+    "mayor_perks": ["Sweet Benevolence", "Extra Event"]
+  },
+  {
+    "start_date": "2020-09-24",
+    "mayor_perks": ["Prospection", "Mining XP Buff"]
+  },
+  {
+    "start_date": "2020-09-30",
+    "mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
+  },
+  {
+    "start_date": "2020-10-05",
+    "mayor_perks": ["null"]
+  },
+  {
+    "start_date": "2020-10-10",
+    "mayor_perks": [
+      "Mythological Ritual",
+      "Sharing is Caring",
+      "Pet XP Buff",
+      "Lucky!"
+    ]
+  },
+  {
+    "start_date": "2020-10-15",
+    "mayor_perks": ["Marauder", "EZPZ"]
+  },
+  {
+    "start_date": "2020-10-20",
+    "mayor_perks": ["Bribe", "Darker Auctions"]
+  },
+  {
+    "start_date": "2020-10-25",
+    "mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
+  },
+  {
+    "start_date": "2020-10-31",
+    "mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
+  },
+  {
+    "start_date": "2020-11-05",
+    "mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
+  },
+  {
+    "start_date": "2020-11-10",
+    "mayor_perks": ["Marauder", "EZPZ", "Benediction"]
+  },
+  {
+    "start_date": "2020-11-15",
+    "mayor_perks": [
+      "Prospection",
+      "Mining XP Buff",
+      "Mining Fiesta",
+      "Molten Forge"
+    ]
+  },
+  {
+    "start_date": "2020-11-20",
+    "mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
+  },
+  {
+    "start_date": "2020-11-25",
+    "mayor_perks": ["Lucky!", "Mythological Ritual"]
+  },
+  {
+    "start_date": "2020-12-01",
+    "mayor_perks": [
+      "QUAD TAXES!!!",
+      "TURBO MINIONS!!!",
+      "DOUBLE MOBS HP!!!",
+      "MOAR SKILLZ!!!"
+    ]
+  },
+  {
+    "start_date": "2020-12-06",
+    "mayor_perks": [
+      "Fishing XP Buff",
+      "Luck of the Sea 2.0",
+      "Fishing Festival"
+    ]
+  },
+  {
+    "start_date": "2020-12-11",
+    "mayor_perks": ["SLASHED Pricing", "Slayer XP Buff", "Pathfinder"]
+  },
+  {
+    "start_date": "2020-12-16",
+    "mayor_perks": ["Marauder", "EZPZ"]
+  },
+  {
+    "start_date": "2020-12-21",
+    "mayor_perks": ["Prospection"]
+  },
+  {
+    "start_date": "2020-12-26",
+    "mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
+  },
+  {
+    "start_date": "2021-01-01",
+    "mayor_perks": ["Lucky!"]
+  },
+  {
+    "start_date": "2021-01-06",
+    "mayor_perks": ["SLASHED Pricing", "Slayer XP Buff", "Pathfinder"]
+  },
+  {
+    "start_date": "2021-01-11",
+    "mayor_perks": ["Perkpocalypse", "Statspocalypse", "Jerrypocalypse"]
+  },
+  {
+    "start_date": "2021-01-16",
+    "mayor_perks": ["Prospection", "Mining XP Buff"]
+  },
+  {
+    "start_date": "2021-01-21",
+    "mayor_perks": ["Marauder", "EZPZ", "Benediction"]
+  },
+  {
+    "start_date": "2021-01-26",
+    "mayor_perks": [
+      "Fishing XP Buff",
+      "Luck of the Sea 2.0",
+      "Fishing Festival"
+    ]
+  },
+  {
+    "start_date": "2021-02-01",
+    "mayor_perks": ["Prospection"]
+  },
+  {
+    "start_date": "2021-02-06",
+    "mayor_perks": [
+      "Lucky!",
+      "Mythological Ritual",
+      "Pet XP Buff",
+      "Sharing is Caring"
+    ]
+  },
+  {
+    "start_date": "2021-02-11",
+    "mayor_perks": [
+      "Fishing XP Buff",
+      "Fishing Festival",
+      "Luck of the Sea 2.0"
+    ]
+  },
+  {
+    "start_date": "2021-02-16",
+    "mayor_perks": ["SLASHED Pricing", "Slayer XP Buff", "Pathfinder"]
+  },
+  {
+    "start_date": "2021-02-21",
+    "mayor_perks": ["Bribe", "Darker Auctions"]
+  },
+  {
+    "start_date": "2021-02-26",
+    "mayor_perks": [
+      "Lucky!",
+      "Mythological Ritual",
+      "Pet XP Buff",
+      "Sharing is Caring"
+    ]
+  },
+  {
+    "start_date": "2021-03-04",
+    "mayor_perks": ["Marauder", "EZPZ", "Benediction"]
+  },
+  {
+    "start_date": "2021-03-09",
+    "mayor_perks": ["Sweet Benevolence", "A Time for Giving", "Extra Event"]
+  },
+  {
+    "start_date": "2021-03-14",
+    "mayor_perks": [
+      "Fishing XP Buff",
+      "Fishing Festival",
+      "Luck of the Sea 2.0"
+    ]
+  },
+  {
+    "start_date": "2021-03-19",
+    "mayor_perks": ["Marauder", "EZPZ", "Benediction"]
+  },
+  {
+    "start_date": "2021-03-24",
+    "mayor_perks": ["Prospection", "Mining Fiesta", "Mining XP Buff"]
+  },
+  {
+    "start_date": "2021-03-29",
+    "mayor_perks": ["SLASHED Pricing", "Slayer XP Buff", "Pathfinder"]
+  },
+  {
+    "start_date": "2021-04-05",
+    "mayor_perks": ["null"]
+  },
+  {
+    "start_date": "2021-04-09",
+    "mayor_perks": ["null"]
+  },
+  {
+    "start_date": "2021-04-16",
+    "mayor_perks": ["null"]
+  },
+  {
+    "start_date": "2021-04-19",
+    "mayor_perks": ["null"]
+  },
+  {
+    "start_date": "2021-04-24",
+    "mayor_perks": [
+      "Lucky!",
+      "Mythological Ritual",
+      "Pet XP Buff",
+      "Sharing is Caring"
+    ]
+  },
+  {
+    "start_date": "2021-04-29",
+    "mayor_perks": ["Marauder", "EZPZ", "Benediction"]
+  },
+  {
+    "start_date": "2021-05-05",
+    "mayor_perks": [
+      "Fishing Festival",
+      "Fishing XP Buff",
+      "Luck of the Sea 2.0"
+    ]
+  },
+  {
+    "start_date": "2021-05-10",
+    "mayor_perks": ["A Time for Giving", "Sweet Benevolence", "Extra Event"]
+  },
+  {
+    "start_date": "2021-05-15",
+    "mayor_perks": ["Jerrypocalypse", "Statspocalypse", "Perkpocalypse"]
+  },
+  {
+    "start_date": "2021-05-20",
+    "mayor_perks": ["Pathfinder", "Slayer XP Buff", "SLASHED Pricing"]
+  },
+  {
+    "start_date": "2021-05-25",
+    "mayor_perks": ["Marauder", "Benediction", "EZPZ"]
+  },
+  {
+    "start_date": "2021-05-30",
+    "mayor_perks": ["Mythological Ritual", "Pet XP Buff", "Sharing is Caring"]
+  },
+  {
+    "start_date": "2021-06-05",
+    "mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
+  },
+  {
+    "start_date": "2021-06-10",
+    "mayor_perks": ["SLASHED Pricing"]
+  },
+  {
+    "start_date": "2021-06-15",
+    "mayor_perks": ["Marauder", "EZPZ"]
+  },
+  {
+    "start_date": "2021-06-20",
+    "mayor_perks": ["Lucky!", "Mythological Ritual"]
+  },
+  {
+    "start_date": "2021-06-25",
+    "mayor_perks": ["Bribe", "Darker Auctions"]
+  },
+  {
+    "start_date": "2021-06-30",
+    "mayor_perks": ["Pet XP Buff", "Mythological Ritual"]
+  },
+  {
+    "start_date": "2021-07-06",
+    "mayor_perks": [
+      "Fishing XP Buff",
+      "Luck of the Sea 2.0",
+      "Fishing Festival"
+    ]
+  },
+  {
+    "start_date": "2021-07-11",
+    "mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
+  },
+  {
+    "start_date": "2021-07-16",
+    "mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
+  },
+  {
+    "start_date": "2021-07-21",
+    "mayor_perks": ["Mythological Ritual", "Pet XP Buff", "Sharing is Caring"]
+  },
+  {
+    "start_date": "2021-07-26",
+    "mayor_perks": ["Marauder", "EZPZ"]
+  },
+  {
+    "start_date": "2021-07-31",
+    "mayor_perks": ["Pathfinder", "Slayer XP Buff", "SLASHED Pricing"]
+  },
+  {
+    "start_date": "2021-08-06",
+    "mayor_perks": [
+      "MOAR SKILLZ!!!",
+      "DOUBLE MOBS HP!!!",
+      "TURBO MINIONS!!!",
+      "QUAD TAXES!!!"
+    ]
+  },
+  {
+    "start_date": "2021-08-11",
+    "mayor_perks": ["Mining Fiesta", "Mining XP Buff", "Prospection"]
+  },
+  {
+    "start_date": "2021-08-16",
+    "mayor_perks": ["Lucky!", "Mythological Ritual"]
+  },
+  {
+    "start_date": "2021-08-21",
+    "mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
+  },
+  {
+    "start_date": "2021-08-26",
+    "mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
+  },
+  {
+    "start_date": "2021-08-31",
+    "mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
+  },
+  {
+    "start_date": "2021-09-06",
+    "mayor_perks": ["Marauder", "EZPZ"]
+  },
+  {
+    "start_date": "2021-09-11",
+    "mayor_perks": ["Mythological Ritual", "Lucky!", "Pet XP Buff"]
+  },
+  {
+    "start_date": "2021-09-16",
+    "mayor_perks": ["Perkpocalypse", "Statspocalypse", "Jerrypocalypse"]
+  },
+  {
+    "start_date": "2021-09-21",
+    "mayor_perks": ["Mining Fiesta", "Mining XP Buff", "Prospection"]
+  },
+  {
+    "start_date": "2021-09-26",
+    "mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
+  },
+  {
+    "start_date": "2021-10-01",
+    "mayor_perks": ["Lucky!", "Mythological Ritual"]
+  },
+  {
+    "start_date": "2021-10-07",
+    "mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
+  },
+  {
+    "start_date": "2021-10-12",
+    "mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
+  },
+  {
+    "start_date": "2021-10-17",
+    "mayor_perks": ["Marauder", "EZPZ"]
+  },
+  {
+    "start_date": "2021-10-22",
+    "mayor_perks": ["SLASHED Pricing"]
+  },
+  {
+    "start_date": "2021-10-27",
+    "mayor_perks": ["Bribe", "Darker Auctions"]
+  },
+  {
+    "start_date": "2021-11-01",
+    "mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
+  },
+  {
+    "start_date": "2021-11-07",
+    "mayor_perks": ["Lucky!", "Mythological Ritual", "Pet XP Buff"]
+  },
+  {
+    "start_date": "2021-11-12",
+    "mayor_perks": ["Sweet Benevolence", "Extra Event"]
+  },
+  {
+    "start_date": "2021-11-17",
+    "mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
+  },
+  {
+    "start_date": "2021-11-22",
+    "mayor_perks": ["Marauder", "EZPZ"]
+  },
+  {
+    "start_date": "2021-11-27",
+    "mayor_perks": ["Lucky!", "Mythological Ritual"]
+  },
+  {
+    "start_date": "2021-12-03",
+    "mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
+  },
+  {
+    "start_date": "2021-12-08",
+    "mayor_perks": [
+      "MOAR SKILLZ!!!",
+      "DOUBLE MOBS HP!!!",
+      "TURBO MINIONS!!!",
+      "QUAD TAXES!!!"
+    ]
+  },
+  {
+    "start_date": "2021-12-13",
+    "mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
+  },
+  {
+    "start_date": "2021-12-18",
+    "mayor_perks": ["Lucky!", "Mythological Ritual"]
+  },
+  {
+    "start_date": "2021-12-23",
+    "mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
+  },
+  {
+    "start_date": "2021-12-28",
+    "mayor_perks": ["Mining XP Buff", "Prospection"]
+  },
+  {
+    "start_date": "2022-01-02",
+    "mayor_perks": ["SLASHED Pricing"]
+  },
+  {
+    "start_date": "2022-01-08",
+    "mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
+  },
+  {
+    "start_date": "2022-01-13",
+    "mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
+  },
+  {
+    "start_date": "2022-01-18",
+    "mayor_perks": ["Jerrypocalypse", "Statspocalypse", "Perkpocalypse"]
+  },
+  {
+    "start_date": "2022-01-23",
+    "mayor_perks": ["Marauder", "EZPZ"]
+  },
+  {
+    "start_date": "2022-01-28",
+    "mayor_perks": ["Lucky!", "Mythological Ritual"]
+  },
+  {
+    "start_date": "2022-02-02",
+    "mayor_perks": ["Marauder"]
+  },
+  {
+    "start_date": "2022-02-08",
+    "mayor_perks": ["null"]
+  },
+  {
+    "start_date": "2022-02-13",
+    "mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
+  },
+  {
+    "start_date": "2022-02-18",
+    "mayor_perks": ["null"]
+  },
+  {
+    "start_date": "2022-02-23",
+    "mayor_perks": ["Fishing XP Buff"]
+  },
+  {
+    "start_date": "2022-02-28",
+    "mayor_perks": ["Bribe", "Darker Auctions"]
+  },
+  {
+    "start_date": "2022-03-05",
+    "mayor_perks": ["SLASHED Pricing", "Slayer XP Buff"]
+  },
+  {
+    "start_date": "2022-03-11",
+    "mayor_perks": ["Sweet Benevolence", "Extra Event", "A Time for Giving"]
+  },
+  {
+    "start_date": "2022-03-16",
+    "mayor_perks": ["Marauder", "EZPZ"]
+  },
+  {
+    "start_date": "2022-03-21",
+    "mayor_perks": ["Prospection", "Mining Fiesta", "Mining XP Buff"]
+  },
+  {
+    "start_date": "2022-03-26",
+    "mayor_perks": ["Lucky!", "Mythological Ritual", "Pet XP Buff"]
+  },
+  {
+    "start_date": "2022-03-31",
+    "mayor_perks": ["Fishing XP Buff", "Luck of the Sea 2.0"]
+  },
+  {
+    "start_date": "2022-04-05",
+    "mayor_perks": ["SLASHED Pricing"]
+  },
+  {
+    "start_date": "2022-04-11",
+    "mayor_perks": [
+      "MOAR SKILLZ!!!",
+      "DOUBLE MOBS HP!!!",
+      "TURBO MINIONS!!!",
+      "QUAD TAXES!!!"
+    ]
+  },
+  {
+    "start_date": "2022-04-16",
+    "mayor_perks": ["SLASHED Pricing"]
+  },
+  {
+    "start_date": "2022-04-21",
+    "mayor_perks": ["Lucky!", "Mythological Ritual"]
+  },
+  {
+    "start_date": "2022-04-26",
+    "mayor_perks": ["Prospection", "Mining XP Buff"]
+  },
+  {
+    "start_date": "2022-05-01",
+    "mayor_perks": ["SLASHED Pricing"]
+  },
+  {
+    "start_date": "2022-05-06",
+    "mayor_perks": ["Lucky!", "Mythological Ritual"]
+  },
+  {
+    "start_date": "2022-05-12",
+    "mayor_perks": ["Marauder", "EZPZ"]
+  }
 ]

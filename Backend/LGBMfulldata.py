@@ -1,51 +1,59 @@
 import os
 import sys
+
+# If the project root not in system's path
+# Insert it in
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
-import optuna
-import json
-import numpy as np
-import pandas as pd
-import joblib
-import lightgbm as lgb
-import requests
-import warnings
-from Utils.event_utils import add_skyblock_time_features
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import r2_score
-from Utils.data_utils import load_or_fetch_item_data, parse_timestamp
-from Utils.mayor_utils import get_mayor_perks, match_mayor_perks
-from datetime import datetime, timedelta, timezone
+
+import optuna  # noqa: E402
+import json  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import joblib  # noqa: E402
+import lightgbm as lgb  # noqa: E402
+import warnings  # noqa: E402
+from Utils.event_utils import add_skyblock_time_features  # noqa: E402
+from sklearn.preprocessing import StandardScaler  # noqa: E402
+from sklearn.metrics import (  # noqa: E402
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+)
+from Utils.data_utils import load_or_fetch_item_data  # noqa: E402
+from Utils.mayor_utils import get_mayor_perks, match_mayor_perks  # noqa: E402
+from Utils.load_proxies import load_proxies  # noqa: E402
+from Utils.data_utils import configure_proxy_pool  # noqa: E402
+from datetime import datetime, timedelta, timezone  # noqa: E402
+from numba import njit, prange  # noqa: E402
 
 warnings.filterwarnings("ignore")
-
-
 
 # =========================================================
 # Data Dump
 # =========================================================
 
+
 def clean_dump(obj, path):
     """Atomic write with fsync for durability"""
     tmp = path + ".tmp"
     joblib.dump(obj, tmp)
-    
-    # Force write to disk (Windows-compatible)
+
     try:
         with open(tmp, "r+b") as f:
             f.flush()
             os.fsync(f.fileno())
     except (OSError, IOError):
-        # If fsync fails, continue anyway - file is already written
         pass
-    
-    # Atomic rename
+
     if os.path.exists(path):
         os.remove(path)
     os.rename(tmp, path)
+
 
 # =========================================================
 # Data Cleaning
@@ -55,106 +63,134 @@ def clean_infinite_values(X):
     X = np.nan_to_num(X, nan=0.0, posinf=1e8, neginf=-1e8)
     return np.clip(X, -1e8, 1e8)
 
-def clip_extreme_outliers(y, threshold=0.25):
-    y = np.asarray(y)
-    return np.clip(y, -threshold, threshold)
-
-def remove_extremes(X, y, cutoff=0.5):
-    mask = np.abs(y) <= cutoff
-    return X[mask], y[mask]
 
 # =========================================================
 # Feature Engineering
 # =========================================================
 
-def add_time_features(df, ts_col='timestamp'):
+
+def add_time_features(df, ts_col="timestamp"):
     dt = pd.to_datetime(df[ts_col])
-    df['hour'] = dt.dt.hour
-    df['minute'] = dt.dt.minute
-    df['dayofweek'] = dt.dt.dayofweek
+    df["hour"] = dt.dt.hour
+    df["minute"] = dt.dt.minute
+    df["dayofweek"] = dt.dt.dayofweek
 
-    df['hour_sin'] = np.sin(2*np.pi*df['hour']/24)
-    df['hour_cos'] = np.cos(2*np.pi*df['hour']/24)
-    df['dow_sin'] = np.sin(2*np.pi*df['dayofweek']/7)
-    df['dow_cos'] = np.cos(2*np.pi*df['dayofweek']/7)
+    df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24)
+    df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24)
+    df["dow_sin"] = np.sin(2 * np.pi * df["dayofweek"] / 7)
+    df["dow_cos"] = np.cos(2 * np.pi * df["dayofweek"] / 7)
 
-    df['delta_minutes'] = df['timestamp'].diff().dt.total_seconds().fillna(0) / 60
+    df["delta_minutes"] = df["timestamp"].diff().dt.total_seconds().fillna(0) / 60
     return df
 
 
 def build_lagged_features(
-    df,
-    price_col='buy_price',
-    vol_col='buy_volume',
-    lags=(1, 2, 3, 6, 12),
-    prefix=''
+    df, price_col="buy_price", vol_col="buy_volume", lags=(1, 2, 3, 6, 12), prefix=""
 ):
     ret = df[price_col].pct_change()
-    df[f'{prefix}ret'] = ret
+    df[f"{prefix}ret"] = ret
 
     for lag in lags:
-        df[f'{prefix}ret_lag_{lag}'] = ret.shift(lag)
-        df[f'{prefix}price_lag_{lag}'] = df[price_col].shift(lag)
-        df[f'{prefix}vol_lag_{lag}'] = df[vol_col].shift(lag)
+        df[f"{prefix}ret_lag_{lag}"] = ret.shift(lag)
+        df[f"{prefix}price_lag_{lag}"] = df[price_col].shift(lag)
+        df[f"{prefix}vol_lag_{lag}"] = df[vol_col].shift(lag)
 
-    df[f'{prefix}roll_mean_6'] = ret.rolling(6).mean()
-    df[f'{prefix}roll_std_6'] = ret.rolling(6).std()
-    df[f'{prefix}mom_6'] = ret.rolling(6).sum()
+    df[f"{prefix}roll_mean_6"] = ret.rolling(6).mean()
+    df[f"{prefix}roll_std_6"] = ret.rolling(6).std()
+    df[f"{prefix}mom_6"] = ret.rolling(6).sum()
 
     return df
 
+
 def prepare_dataframe_from_raw(data, mayor_data=None):
-    rows = []
+    if not data:
+        return pd.DataFrame()
 
-    for entry in data:
-        try:
-            ts = parse_timestamp(entry['timestamp'])
-        except:
-            continue
+    df = pd.DataFrame(data)
 
-        def f(k):
-            try:
-                return float(entry.get(k, 0))
-            except:
-                return 0.0
+    required_cols = [
+        "timestamp",
+        "buy",
+        "sell",
+        "buyVolume",
+        "sellVolume",
+        "maxBuy",
+        "minBuy",
+    ]
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = 0.0
 
-        row = {
-            'timestamp': ts,
-            'buy_price': f('buy'),
-            'sell_price': f('sell'),
-            'buy_volume': f('buyVolume'),
-            'sell_volume': f('sellVolume'),
-            'max_buy': f('maxBuy'),
-            'min_buy': f('minBuy'),
-        }
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.dropna(subset=["timestamp"])
 
-        if mayor_data is not None:
-            perks = match_mayor_perks(ts, mayor_data)
-            for i, v in enumerate(perks):
-                row[f'mayor_{i}'] = v
-        rows.append(row)
+    cols_to_float = {
+        "buy": "buy_price",
+        "sell": "sell_price",
+        "buyVolume": "buy_volume",
+        "sellVolume": "sell_volume",
+        "maxBuy": "max_buy",
+        "minBuy": "min_buy",
+    }
 
-    df = pd.DataFrame(rows)
+    for old_col, new_col in cols_to_float.items():
+        df[new_col] = (
+            pd.to_numeric(df[old_col], errors="coerce").fillna(0.0).astype(float)
+        )
+
+    df = df.drop(columns=list(cols_to_float.keys()))
+
     if df.empty:
         return df
 
-    df = df.sort_values('timestamp').reset_index(drop=True)
+    if df["timestamp"].dt.tz is None:
+        df["timestamp"] = df["timestamp"].dt.tz_localize(timezone.utc)
+    else:
+        df["timestamp"] = df["timestamp"].dt.tz_convert(timezone.utc)
+
+    df = df.sort_values("timestamp").reset_index(drop=True)
+
+    if mayor_data is not None and len(mayor_data) > 0:
+        mayor_df = pd.DataFrame(mayor_data)
+        if "start_date" in mayor_df.columns and "perks" in mayor_df.columns:
+            perks_df = pd.DataFrame(mayor_df["perks"].tolist(), index=mayor_df.index)
+            perks_df.columns = [f"mayor_{i}" for i in range(perks_df.shape[1])]
+
+            mayor_df = pd.concat([mayor_df.drop(columns=["perks"]), perks_df], axis=1)
+            mayor_df["start_date"] = pd.to_datetime(mayor_df["start_date"], utc=True)
+            mayor_df = mayor_df.sort_values("start_date")
+
+            df = pd.merge_asof(
+                df,
+                mayor_df,
+                left_on="timestamp",
+                right_on="start_date",
+                direction="backward",
+            )
+            df = df.drop(columns=["start_date"])
+
+            mayor_cols = [col for col in df.columns if col.startswith("mayor_")]
+            df[mayor_cols] = df[mayor_cols].fillna(0.0)
+
     df = add_time_features(df)
-    df = build_lagged_features(df, price_col='buy_price', vol_col='buy_volume', prefix='buy_')
-    df = add_skyblock_time_features(df, ts_col='timestamp')
+    df = build_lagged_features(
+        df, price_col="buy_price", vol_col="buy_volume", prefix="buy_"
+    )
+    df = add_skyblock_time_features(df, ts_col="timestamp")
     return df
 
-def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
-    df = df.copy().sort_values('timestamp').reset_index(drop=True)
-    ts = pd.to_datetime(df['timestamp']).astype('int64') // 10**9
-    ts = ts.values # Pure numpy for faster indexing
-    horizon_sec = horizon_minutes * 60
-    
-    buy_prices = df['buy_price'].values
-    sell_prices = df['sell_price'].values
-    n = len(df)
-    
-    # Pre-allocate all target arrays
+
+@njit(nopython=True, fastmath=True, cache=True, parallel=True)
+def _compute_targets_jit(
+    df_len,
+    ts,
+    buy_prices,
+    sell_prices,
+    initial_gaps,
+    horizon_sec,
+    tax,
+):
+    n = df_len
     expected_return = np.zeros(n)
     profit_prob = np.zeros(n)
     time_to_first_up = np.zeros(n)
@@ -168,208 +204,320 @@ def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
     win_rate_2pct_list = np.zeros(n)
     mae_list = np.zeros(n)
     mfe_list = np.zeros(n)
-    profitable_1pct_list = np.zeros(n, dtype=int)
-    profitable_2pct_list = np.zeros(n, dtype=int)
-    
-    # Pre-compute all returns once
-    initial_gaps = buy_prices * (1 - tax) - sell_prices
-    
-    # O(n) sliding window approach
-    j = 0
-    for i in range(n):
+    profitable_1pct_list = np.zeros(n, dtype=np.int64)
+    profitable_2pct_list = np.zeros(n, dtype=np.int64)
+
+    min_delay = 10 * 60
+
+    for i in prange(n):
         entry_price = sell_prices[i]
         initial_gap = initial_gaps[i]
-        
-        # Advance right pointer to end of horizon
-        while j < n and ts[j] - ts[i] <= horizon_sec:
-            j += 1
-        
-        # Window is [i, j)
-        if j <= i:
+        start_ts = ts[i]
+
+        max_profit = -np.inf
+        max_loss = np.inf
+        t_max_rel_idx = -1
+        t_min_rel_idx = -1
+
+        first_up_idx = -1
+        first_down_idx = -1
+
+        count = 0
+        pos_count = 0
+        win_1pct_count = 0
+        win_2pct_count = 0
+
+        for j in range(i, n):
+            time_delta = ts[j] - start_ts
+            if time_delta > horizon_sec:
+                break
+
+            if time_delta > min_delay:
+                ret = (buy_prices[j] * (1 - tax) - entry_price - initial_gap) / (
+                    entry_price + 1e-9
+                )
+                count += 1
+
+                if ret > 0:
+                    pos_count += 1
+                    if first_up_idx == -1:
+                        first_up_idx = j
+                if ret < 0:
+                    if first_down_idx == -1:
+                        first_down_idx = j
+
+                if ret > max_profit:
+                    max_profit = ret
+                    t_max_rel_idx = j
+
+                if ret < max_loss:
+                    max_loss = ret
+                    t_min_rel_idx = j
+
+                if ret >= 0.01:
+                    win_1pct_count += 1
+                if ret >= 0.02:
+                    win_2pct_count += 1
+
+        if count == 0:
             continue
-            
-        # Compute returns for this window
-        # Compute full forward returns
-        returns_full = (buy_prices[i:j] * (1 - tax) - entry_price) - initial_gap
-        returns_full = returns_full / (entry_price + 1e-9)
 
-        # Time differences
-        time_deltas = ts[i:j] - ts[i]
+        mae_running = np.inf
+        # Chronological TP / SL check
+        # We define a 1.5% take profit and 1.5% stop loss threshold
+        tp_threshold = 0.015
+        sl_threshold = -0.015
 
-        # Exclude near-term moves (e.g., first 10 minutes)
-        min_delay = 10 * 60
-        mask = time_deltas > min_delay
+        final_return = 0.0
+        hit_target = False
 
-        if np.any(mask):
-            returns_horizon = returns_full[mask]
-        else:
-            continue  # skip this index if no valid forward data
+        for j in range(i, n):
+            time_delta = ts[j] - start_ts
+            if time_delta > horizon_sec:
+                break
 
+            if time_delta > min_delay:
+                ret = (buy_prices[j] * (1 - tax) - entry_price - initial_gap) / (
+                    entry_price + 1e-9
+                )
 
-        # Expected return and profit probability
-        expected_return[i] = np.median(returns_horizon)
-        profit_prob[i] = np.mean(returns_horizon > 0)
-        
-        # Time to first up/down
-        up_idxs = np.where(returns_horizon > 0)[0]
-        down_idxs = np.where(returns_horizon < 0)[0]
-        if len(up_idxs) > 0:
-            time_to_first_up[i] = ts[i + up_idxs[0]] - ts[i]
-        if len(down_idxs) > 0:
-            time_to_first_down[i] = ts[i + down_idxs[0]] - ts[i]
-        
-        # Max/min and their timing
-        t_max_rel = np.argmax(returns_horizon)
-        t_min_rel = np.argmin(returns_horizon)
-        
-        time_to_max[i] = ts[i + t_max_rel] - ts[i]
-        time_to_min[i] = ts[i + t_min_rel] - ts[i]
-        
-        max_profit = returns_horizon[t_max_rel]
-        max_loss = returns_horizon[t_min_rel]
-        
+                if ret < mae_running:
+                    mae_running = ret
+
+                if ret >= tp_threshold:
+                    final_return = ret
+                    hit_target = True
+                    break
+                elif ret <= sl_threshold:
+                    final_return = ret
+                    hit_target = True
+                    break
+
+        if not hit_target and count > 0:
+            # If we never hit TP or SL, our expected return is simply the last return we saw
+            final_return = ret
+
+        mae_val = mae_running if mae_running != np.inf else 0.0
+        expected_return[i] = final_return
+
+        profit_prob[i] = pos_count / count
+
+        if first_up_idx != -1:
+            time_to_first_up[i] = ts[first_up_idx] - start_ts
+        if first_down_idx != -1:
+            time_to_first_down[i] = ts[first_down_idx] - start_ts
+
+        if t_max_rel_idx != -1:
+            time_to_max[i] = ts[t_max_rel_idx] - start_ts
+            time_to_min[i] = ts[t_min_rel_idx] - start_ts
+
         max_profit_list[i] = max_profit
         max_loss_list[i] = max_loss
         risk_reward_list[i] = max_profit / abs(max_loss) if max_loss < 0 else max_profit
-        
-        # Win rates
-        win_rate_1pct_list[i] = np.mean(returns_horizon >= 0.01)
-        win_rate_2pct_list[i] = np.mean(returns_horizon >= 0.02)
-        
-        # MAE (Max Adverse Excursion) - worst drawdown before peak
-        mae_list[i] = np.min(returns_horizon[:t_max_rel + 1]) if t_max_rel > 0 else 0.0
-        
-        # MFE (Max Favorable Excursion)
+
+        win_rate_1pct_list[i] = win_1pct_count / count
+        win_rate_2pct_list[i] = win_2pct_count / count
+
+        mae_list[i] = mae_val
         mfe_list[i] = max_profit
-        
-        # Profitability flags
+
         profitable_1pct_list[i] = int(max_profit >= 0.01)
         profitable_2pct_list[i] = int(max_profit >= 0.02)
-    
-    # Feature engineering (vectorized)
-    returns_last_5min = df['buy_price'].pct_change(periods=5)
-    returns_last_15min = df['buy_price'].pct_change(periods=15)
-    price_vs_5min_high = df['buy_price'] / df['buy_price'].rolling(5).max()
-    price_vs_5min_low = df['buy_price'] / df['buy_price'].rolling(5).min()
-    price_volatility = df['buy_price'].rolling(20).std() / df['buy_price'].rolling(20).mean()
-    spread_volatility = (df['buy_price'] - df['sell_price']).rolling(20).std()
-    spread_pct = (df['buy_price'] - df['sell_price']) / df['sell_price']
+
+    return (
+        expected_return,
+        profit_prob,
+        time_to_first_up,
+        time_to_first_down,
+        time_to_max,
+        time_to_min,
+        max_profit_list,
+        max_loss_list,
+        risk_reward_list,
+        win_rate_1pct_list,
+        win_rate_2pct_list,
+        mae_list,
+        mfe_list,
+        profitable_1pct_list,
+        profitable_2pct_list,
+    )
+
+
+def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
+    df = df.copy().sort_values("timestamp").reset_index(drop=True)
+    ts = pd.to_datetime(df["timestamp"]).astype("int64") // 10**9
+    ts = ts.values
+    horizon_sec = horizon_minutes * 60
+
+    buy_prices = df["buy_price"].values
+    sell_prices = df["sell_price"].values
+
+    initial_gaps = buy_prices * (1 - tax) - sell_prices
+
+    (
+        expected_return,
+        profit_prob,
+        time_to_first_up,
+        time_to_first_down,
+        time_to_max,
+        time_to_min,
+        max_profit_list,
+        max_loss_list,
+        risk_reward_list,
+        win_rate_1pct_list,
+        win_rate_2pct_list,
+        mae_list,
+        mfe_list,
+        profitable_1pct_list,
+        profitable_2pct_list,
+    ) = _compute_targets_jit(
+        len(df),
+        ts,
+        buy_prices,
+        sell_prices,
+        initial_gaps,
+        horizon_sec,
+        tax,
+    )
+
+    returns_last_5min = df["buy_price"].pct_change(periods=5)
+    returns_last_15min = df["buy_price"].pct_change(periods=15)
+    price_vs_5min_high = df["buy_price"] / df["buy_price"].rolling(5).max()
+    price_vs_5min_low = df["buy_price"] / df["buy_price"].rolling(5).min()
+    price_volatility = (
+        df["buy_price"].rolling(20).std() / df["buy_price"].rolling(20).mean()
+    )
+    spread_volatility = (df["buy_price"] - df["sell_price"]).rolling(20).std()
+    spread_pct = (df["buy_price"] - df["sell_price"]) / df["sell_price"]
     spread_momentum = spread_pct.diff()
-    
-    # Assign all computed values
-    df['returns_last_5min'] = returns_last_5min
-    df['returns_last_15min'] = returns_last_15min
-    df['price_vs_5min_high'] = price_vs_5min_high
-    df['price_vs_5min_low'] = price_vs_5min_low
-    df['price_volatility'] = price_volatility
-    df['spread_volatility'] = spread_volatility
-    df['spread_pct'] = spread_pct
-    df['spread_momentum'] = spread_momentum
-    df['max_profit'] = max_profit_list
-    df['max_loss'] = max_loss_list
-    df['risk_reward'] = risk_reward_list
-    df['win_rate_1pct'] = win_rate_1pct_list
-    df['win_rate_2pct'] = win_rate_2pct_list
-    df['mae'] = mae_list
-    df['mfe'] = mfe_list
-    df['profitable_1pct'] = profitable_1pct_list
-    df['profitable_2pct'] = profitable_2pct_list
-    df['entry_label'] = expected_return
-    df['profit_prob'] = profit_prob
-    df['time_to_first_up'] = time_to_first_up
-    df['time_to_first_down'] = time_to_first_down
-    df['time_to_max'] = time_to_max
-    df['time_to_min'] = time_to_min
-    
+
+    df["returns_last_5min"] = returns_last_5min
+    df["returns_last_15min"] = returns_last_15min
+    df["price_vs_5min_high"] = price_vs_5min_high
+    df["price_vs_5min_low"] = price_vs_5min_low
+    df["price_volatility"] = price_volatility
+    df["spread_volatility"] = spread_volatility
+    df["spread_pct"] = spread_pct
+    df["spread_momentum"] = spread_momentum
+    df["max_profit"] = max_profit_list
+    df["max_loss"] = max_loss_list
+    df["risk_reward"] = risk_reward_list
+    df["win_rate_1pct"] = win_rate_1pct_list
+    df["win_rate_2pct"] = win_rate_2pct_list
+    df["mae"] = mae_list
+    df["mfe"] = mfe_list
+    df["profitable_1pct"] = profitable_1pct_list
+    df["profitable_2pct"] = profitable_2pct_list
+    df["entry_label"] = expected_return
+    df["profit_prob"] = profit_prob
+    df["time_to_first_up"] = time_to_first_up
+    df["time_to_first_down"] = time_to_first_down
+    df["time_to_max"] = time_to_max
+    df["time_to_min"] = time_to_min
+
+    # Remove extreme outliers (>200% return)
+    df = df[np.abs(df["entry_label"]) <= 2.0]
+
     return df
+
 
 def load_entry_targets(item_id):
     csv_directory = os.path.join(project_root, "csv files")
-    df = pd.read_csv(os.path.join(csv_directory, f"{item_id}_debug_data.csv"), parse_dates=['timestamp'])
+    df = pd.read_csv(
+        os.path.join(csv_directory, f"{item_id}_debug_data.csv"),
+        parse_dates=["timestamp"],
+    )
     return df
 
-# =========================================================
-# Quantile Loss
-# =========================================================
-
-def quantile_loss(y_true, y_pred, alpha):
-    diff = y_true - y_pred
-    return np.mean(np.maximum(alpha * diff, (alpha - 1) * diff))
 
 # =========================================================
-# Optuna Objective (Entry Regression)
+# Optuna Objective (Entry Classification)
 # =========================================================
+
 
 def entry_objective(trial, X, y):
     split_idx = int(len(X) * 0.8)
-    X_train, X_val = X[:split_idx], X[split_idx:]
+
+    X_train_raw, X_val_raw = X[:split_idx], X[split_idx:]
     y_train, y_val = y[:split_idx], y[split_idx:]
 
-    clip_thr = trial.suggest_float("label_clip", 0.01, 0.5, log=True)
-    y_train = np.clip(y_train, -clip_thr, clip_thr)
-    y_val = np.clip(y_val, -clip_thr, clip_thr)
+    if len(X_train_raw) == 0 or len(X_val_raw) == 0 or len(np.unique(y_train)) < 2:
+        return 9999.0
 
-    # how much extra penalty for wrong sign
-    sign_penalty = trial.suggest_float("sign_penalty", 1.0, 5.0)
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train_raw)
+    X_val = scaler.transform(X_val_raw)
+
+    neg_count = np.sum(y_train == 0)
+    pos_count = np.sum(y_train == 1)
+    scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1.0
 
     params = {
-        "objective": "regression",
+        "objective": "binary",
+        "device_type": "cpu",
+        "metric": "binary_logloss",
+        "scale_pos_weight": scale_pos_weight,
         "learning_rate": trial.suggest_float("lr", 0.01, 0.15, log=True),
         "num_leaves": trial.suggest_int("num_leaves", 16, 64),
         "feature_fraction": 0.8,
         "bagging_fraction": 0.8,
         "bagging_freq": 3,
-        "verbosity": -1
+        "verbosity": -1,
     }
+
+    def pruning_callback(env):
+        if env.iteration < 50:
+            return
+        preds = env.model.predict(X_val)
+        eps = 1e-15
+        preds = np.clip(preds, eps, 1 - eps)
+        loss = -np.mean(y_val * np.log(preds) + (1 - y_val) * np.log(1 - preds))
+        trial.report(loss, step=env.iteration)
+        if trial.should_prune():
+            raise optuna.TrialPruned()
 
     dtrain = lgb.Dataset(X_train, label=y_train)
-    model = lgb.train(params, dtrain, num_boost_round=300)
+
+    try:
+        model = lgb.train(
+            params,
+            dtrain,
+            num_boost_round=100,
+            callbacks=[pruning_callback],
+        )
+    except optuna.TrialPruned:
+        raise
+    except Exception as e:
+        print(f"  ⚠ Unexpected error during trial: {e}")
+        return 9999.0
 
     preds = model.predict(X_val)
+    eps = 1e-15
+    preds = np.clip(preds, eps, 1 - eps)
+    loss = -np.mean(y_val * np.log(preds) + (1 - y_val) * np.log(1 - preds))
 
-    # squared errors
-    sq_errors = (preds - y_val) ** 2
-
-    # identify wrong-sign predictions
-    wrong_sign = np.sign(preds) != np.sign(y_val)
-
-    # apply heavier weight where sign is wrong
-    weights = np.ones_like(sq_errors)
-    weights[wrong_sign] = sign_penalty
-
-    weighted_mse = np.mean(weights * sq_errors)
-    weighted_rmse = np.sqrt(weighted_mse)
-
-    return weighted_rmse
-
-
-
-# =========================================================
-# Percent Error Stats
-# =========================================================
-
-def percent_error_stats(y_true, y_pred, eps=1e-9):
-    pct_err = (y_pred - y_true) / (np.abs(y_true) + eps)
-
-    stats = {
-        "min_pct_error": np.min(pct_err),
-        "max_pct_error": np.max(pct_err),
-        "median_pct_error": np.median(pct_err),
-        "mean_pct_error": np.mean(pct_err),
-        "mean_abs_pct_error": np.mean(np.abs(pct_err)),
-        "median_abs_pct_error": np.median(np.abs(pct_err)),
-    }
-
-    return stats
+    return loss
 
 
 # =========================================================
 # GENERATE CSV FILES
 # =========================================================
 
-def generate_csv_files(item_id):
-    mayor_data = get_mayor_perks()
-    data = load_or_fetch_item_data(item_id)
+
+def generate_csv_files(
+    item_id,
+    enable_fetch_if_missing,
+    enable_update_with_new_data,
+    mayor_data=None,
+):
+    if mayor_data is None:
+        mayor_data = get_mayor_perks()
+
+    data = load_or_fetch_item_data(
+        item_id,
+        enable_fetch_if_missing,
+        enable_update_with_new_data,
+    )
     df = prepare_dataframe_from_raw(data, mayor_data)
     df = add_skyblock_time_features(df)
     df = build_lagged_features(df)
@@ -389,54 +537,112 @@ def generate_csv_files(item_id):
 # Training
 # =========================================================
 
-def train_model_system(item_id):
-    if os.path.exists(os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")):
+
+def train_model_system(
+    item_id, fetch_if_missing, update_with_new_data, mayor_data=None
+):
+    if os.path.exists(
+        os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")
+    ):
         print(f"✓ CSV file for {item_id} already exists")
         df = load_entry_targets(item_id)
     else:
         print(f"✗ CSV file for {item_id} does not exist")
-        df = generate_csv_files(item_id)
+        df = generate_csv_files(
+            item_id,
+            fetch_if_missing,
+            update_with_new_data,
+            mayor_data=mayor_data,
+        )
 
     future_cols = {
-    'entry_label', 'max_profit', 'max_loss', 'risk_reward',
-    'win_rate_1pct', 'win_rate_2pct',
-    'mae', 'mfe',
-    'profitable_1pct', 'profitable_2pct',
-    'profit_prob',
-    'time_to_first_up', 'time_to_first_down',
-    'time_to_max', 'time_to_min'
+        "entry_label",
+        "max_profit",
+        "max_loss",
+        "risk_reward",
+        "win_rate_1pct",
+        "win_rate_2pct",
+        "mae",
+        "mfe",
+        "profitable_1pct",
+        "profitable_2pct",
+        "profit_prob",
+        "time_to_first_up",
+        "time_to_first_down",
+        "time_to_max",
+        "time_to_min",
     }
-    exclude = {'timestamp'} | future_cols
+    exclude = {"timestamp"} | future_cols
 
     feature_cols = [c for c in df.columns if c not in exclude]
 
     X = clean_infinite_values(df[feature_cols].values)
-    y = df['entry_label'].values
+    y_raw = df["entry_label"].values
 
+    # === CLASSIFICATION TARGET ===
+    # Convert problem to Yes/No: "Will this go up by at least 1.5%?"
+    y = (y_raw >= 0.015).astype(int)
+    # =============================
+
+    split_idx = int(len(X) * 0.8)
+    y_train_split = y[:split_idx]
+    y_val_split = y[split_idx:]
+
+    if np.sum(y_train_split) < 20 or np.sum(y_val_split) < 5:
+        print(
+            f"  ⚠ Skipping {item_id}: Not enough positive examples in train/val sets (Train: {np.sum(y_train_split)}, Val: {np.sum(y_val_split)})."
+        )
+        return
+
+    # Trial runs
+    study = optuna.create_study(
+        direction="minimize",
+        pruner=optuna.pruners.MedianPruner(
+            n_startup_trials=5,
+            n_warmup_steps=50,
+        ),
+    )
+    study.optimize(
+        lambda t: entry_objective(t, X, y),
+        n_trials=30,
+        n_jobs=-1,  # Parralelize trials across all available CPU cores
+    )
+
+    params = study.best_params
+    if not params:
+        print(f"  ⚠ Skipping {item_id}: Optuna could not find any valid parameters.")
+        return
+
+    # Handle class imbalance
+    neg_count = np.sum(y == 0)
+    pos_count = np.sum(y == 1)
+    scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1.0
+
+    params.update(
+        {
+            "objective": "binary",
+            "device_type": "gpu",
+            "metric": "binary_logloss",
+            "scale_pos_weight": scale_pos_weight,
+            "min_data_in_leaf": 50,  # Prevents GPU decision tree split crash
+            "max_bin": 63,  # Optimized for stable GPU training
+            "verbosity": -1,
+        }
+    )
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    X_scaled, y = remove_extremes(X_scaled, y, cutoff=0.5)
-
-    study = optuna.create_study(direction="minimize")
-    study.optimize(lambda t: entry_objective(t, X_scaled, y), n_trials=30)
-
-    params = study.best_params
-    best_clip = params.pop("label_clip")
-    params.update({
-        "objective": "regression",
-        "metric": "rmse",
-        "verbosity": -1
-    })
-    y = clip_extreme_outliers(y, threshold=best_clip)
-
-    model = lgb.train(params, lgb.Dataset(X_scaled, label=y), num_boost_round=400)
+    # Final train
+    model = lgb.train(
+        params,
+        lgb.Dataset(X_scaled, label=y),
+        num_boost_round=400,
+    )
     model_dir = os.path.join(project_root, "Model_Files")
     os.makedirs(model_dir, exist_ok=True)
-    
+
     base = os.path.join(model_dir, str(item_id))
-    
 
     try:
         clean_dump(model, base + "_entry_model.pkl")
@@ -446,145 +652,159 @@ def train_model_system(item_id):
     except Exception as e:
         print(f"✗ Error saving files for {item_id}: {e}")
 
+
 # =========================================================
 # Test Train Setup for Model Accuracy Metrics
 # =========================================================
 
 
-def test_train_model_system(item_id):
-    if os.path.exists(os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")):
+def test_train_model_system(
+    item_id, fetch_if_missing, update_with_new_data, mayor_data=None
+):
+    if os.path.exists(
+        os.path.join(project_root, "csv files", f"{item_id}_debug_data.csv")
+    ):
         print(f"✓ CSV file for {item_id} already exists")
         df = load_entry_targets(item_id)
     else:
         print(f"✗ CSV file for {item_id} does not exist")
-        df = generate_csv_files(item_id)
+        df = generate_csv_files(
+            item_id,
+            fetch_if_missing,
+            update_with_new_data,
+            mayor_data=mayor_data,
+        )
 
-    tested_metrics_dict = {
-        "rmse": None,
-        "mae": None,
-        "r2": None,
-        "sign_accuracy": None,
-        "percent_error_stats": None,
-        "safe_sign_accuracy": None
-    }
+    tested_metrics_dict = {}
 
-    split_idx = int(len(df) * 0.8)  
+    split_idx = int(len(df) * 0.8)
     train_df = df.iloc[:split_idx]
     val_df = df.iloc[split_idx:]
 
     future_cols = {
-    'entry_label', 'max_profit', 'max_loss', 'risk_reward',
-    'win_rate_1pct', 'win_rate_2pct',
-    'mae', 'mfe',
-    'profitable_1pct', 'profitable_2pct',
-    'profit_prob',
-    'time_to_first_up', 'time_to_first_down',
-    'time_to_max', 'time_to_min'
+        "entry_label",
+        "max_profit",
+        "max_loss",
+        "risk_reward",
+        "win_rate_1pct",
+        "win_rate_2pct",
+        "mae",
+        "mfe",
+        "profitable_1pct",
+        "profitable_2pct",
+        "profit_prob",
+        "time_to_first_up",
+        "time_to_first_down",
+        "time_to_max",
+        "time_to_min",
     }
 
-    exclude = {'timestamp'} | future_cols
+    exclude = {"timestamp"} | future_cols
     feature_cols = [c for c in df.columns if c not in exclude]
 
     X_train = clean_infinite_values(train_df[feature_cols].values)
-    y_train = train_df['entry_label'].values
+    y_train_raw = train_df["entry_label"].values
     X_val = clean_infinite_values(val_df[feature_cols].values)
-    y_val = val_df['entry_label'].values
+    y_val_raw = val_df["entry_label"].values
 
+    # === CLASSIFICATION TARGET ===
+    y_train = (y_train_raw >= 0.015).astype(int)
+    y_val = (y_val_raw >= 0.015).astype(int)
+    # =============================
 
+    if np.sum(y_train) < 20 or np.sum(y_val) < 5:
+        print(
+            f"  ⚠ Skipping {item_id}: Not enough positive examples in train/val sets (Train: {np.sum(y_train)}, Val: {np.sum(y_val)})."
+        )
+        return
 
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_val_scaled = scaler.transform(X_val)
 
-    X_train_scaled, y_train = remove_extremes(X_train_scaled, y_train, cutoff=0.5)
-    X_val_scaled, y_val = remove_extremes(X_val_scaled, y_val, cutoff=0.5)
+    print(f"Train spikes: {np.sum(y_train)} / {len(y_train)}")
+    print(f"Val spikes: {np.sum(y_val)} / {len(y_val)}")
 
-    print("y_train: min =", y_train.min(), 
-      "median =", np.median(y_train), 
-      "max =", y_train.max())
-    print("y_val: min =", y_val.min(), 
-        "median =", np.median(y_val), 
-        "max =", y_val.max())
-    pos_train = np.sum(y_train > 0)
-    neg_train = np.sum(y_train < 0)
-    zero_train = np.sum(y_train == 0)
-
-
-
-    print(f"y_train: positive={pos_train}, negative={neg_train}, zero={zero_train}")
-
-
-    pos_val = np.sum(y_val > 0)
-    neg_val = np.sum(y_val < 0)
-    zero_val = np.sum(y_val == 0)
-
-    print(f"y_val: positive={pos_val}, negative={neg_val}, zero={zero_val}")
-    print(f"y_train: {pos_train/len(y_train)*100:.1f}% positive, {neg_train/len(y_train)*100:.1f}% negative")
-    print(f"y_val: {pos_val/len(y_val)*100:.1f}% positive, {neg_val/len(y_val)*100:.1f}% negative")
-
-
-    print("X_val NaNs:", np.isnan(X_val).sum())
-    print("X_val infs:", np.isinf(X_val).sum())
-
-
-    study = optuna.create_study(direction="minimize")
-    study.optimize(lambda t: entry_objective(t, X_train_scaled, y_train), n_trials=30)
+    study = optuna.create_study(
+        direction="minimize",
+        pruner=optuna.pruners.MedianPruner(
+            n_startup_trials=5,
+            n_warmup_steps=50,
+        ),
+    )
+    study.optimize(
+        lambda t: entry_objective(t, X_train, y_train),
+        n_trials=30,
+        n_jobs=-1,  # Parralelize trials across all available CPU cores
+    )
 
     params = study.best_params
-    best_clip = params.pop("label_clip")
-    params.update({
-        "objective": "regression",
-        "metric": "rmse",
-        "verbosity": -1
-    })
+    if not params:
+        print(f"  ⚠ Skipping {item_id}: Optuna could not find any valid parameters.")
+        return
 
-    y_val = clip_extreme_outliers(y_val, threshold=best_clip)
-    y_train = clip_extreme_outliers(y_train, threshold=best_clip)
+    neg_count = np.sum(y_train == 0)
+    pos_count = np.sum(y_train == 1)
+    scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1.0
 
-    model = lgb.train(params, lgb.Dataset(X_train_scaled, label=y_train), num_boost_round=400)
-    importance_df = pd.DataFrame({
-        "feature": feature_cols,
-        "importance": model.feature_importance(importance_type="gain")
-    }).sort_values("importance", ascending=False)
+    params.update(
+        {
+            "objective": "binary",
+            "device_type": "gpu",
+            "metric": "binary_logloss",
+            "scale_pos_weight": scale_pos_weight,
+            "min_data_in_leaf": 50,  # Prevent GPU decision tree split crash
+            "max_bin": 63,  # Stable and fast on GPU
+            "verbosity": -1,
+        }
+    )
 
+    model = lgb.train(
+        params,
+        lgb.Dataset(X_train_scaled, label=y_train),
+        num_boost_round=400,
+    )
+
+    importance_df = pd.DataFrame(
+        {
+            "feature": feature_cols,
+            "importance": model.feature_importance(importance_type="gain"),
+        }
+    ).sort_values("importance", ascending=False)
     print("\nTop 20 Features by Gain:")
     print(importance_df.head(20))
 
-    corrs = df[feature_cols].corrwith(df['entry_label']).abs().sort_values(ascending=False)
-    print("\nTop correlated features with entry_label:")
-    print(corrs.head(20))
+    y_pred_prob = model.predict(X_val_scaled)
+    y_pred_binary = (y_pred_prob >= 0.5).astype(int)
 
-    y_pred = model.predict(X_val_scaled)
-    rmse = np.sqrt(np.mean((y_pred - y_val)**2))
-    mae = np.mean(np.abs(y_pred - y_val))
-    r2 = r2_score(y_val, y_pred)  # compute manually
-    y_mean = np.full_like(y_val, y_train.mean())
-    baseline_r2 = r2_score(y_val, y_mean)
-    print("Baseline R^2:", baseline_r2)
-    print(f"RMSE: {rmse}, MAE: {mae}, R^2: {r2}")
-    pred_sign = np.sign(model.predict(X_val_scaled))
-    true_sign = np.sign(y_val)
-    accuracy = np.mean(pred_sign == true_sign)
-    print("Sign accuracy:", accuracy)
-    stats = percent_error_stats(y_val, y_pred)
+    try:
+        acc = accuracy_score(y_val, y_pred_binary)
+        prec = precision_score(y_val, y_pred_binary, zero_division=0)
+        rec = recall_score(y_val, y_pred_binary, zero_division=0)
+        f1 = f1_score(y_val, y_pred_binary, zero_division=0)
+        auc = roc_auc_score(y_val, y_pred_prob)
+    except Exception:
+        acc, prec, rec, f1, auc = 0, 0, 0, 0, 0
 
-    for k, v in stats.items():
-        print(f"{k}: {v*100:.2f}%")
-    
-    mask = y_val > 0.01
-    safe_sign_acc = np.mean((y_pred[mask] > 0) == (y_val[mask] > 0))
+    print(f"Accuracy:  {acc:.4f}")
+    print(f"Precision: {prec:.4f} (When the bot buys, how often is it a real spike?)")
+    print(f"Recall:    {rec:.4f} (Out of all real spikes, how many did the bot catch?)")
+    print(f"F1 Score:  {f1:.4f}")
+    print(f"ROC AUC:   {auc:.4f}")
 
-    tested_metrics_dict["rmse"] = rmse
-    tested_metrics_dict["mae"] = mae
-    tested_metrics_dict["r2"] = r2
-    tested_metrics_dict["sign_accuracy"] = accuracy
-    tested_metrics_dict["percent_error_stats"] = stats
-    tested_metrics_dict["safe_sign_accuracy"] = safe_sign_acc
+    tested_metrics_dict["accuracy"] = acc
+    tested_metrics_dict["precision"] = prec
+    tested_metrics_dict["recall"] = rec
+    tested_metrics_dict["f1"] = f1
+    tested_metrics_dict["roc_auc"] = auc
+    tested_metrics_dict["total_validation_samples"] = int(len(y_val))
+    tested_metrics_dict["actual_spikes_in_validation"] = int(np.sum(y_val))
 
-    json.dump(tested_metrics_dict, open(os.path.join(project_root, "Model_Files", f"{item_id}_test_train_metrics.json"), "w"), indent=4)
-    
-    print("Safe sign accuracy (true positive returns):", safe_sign_acc)
-
+    with open(
+        os.path.join(project_root, "Model_Files", f"{item_id}_test_train_metrics.json"),
+        "w",
+    ) as f:
+        json.dump(tested_metrics_dict, f, indent=4)
 
 
 # =========================================================
@@ -592,33 +812,69 @@ def test_train_model_system(item_id):
 # =========================================================
 
 
-
-def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horizon_hours=3, step_minutes=5):
+def predict_entries(
+    model,
+    scaler,
+    feature_cols,
+    item_id,
+    mayor_data=None,
+    horizon_hours=3,
+    step_minutes=5,
+):
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=horizon_hours)
     start_str = start.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
     end_str = now.strftime("%Y-%m-%dT%H:%M:%S.000").replace(":", "%3A")
     base_url = "https://sky.coflnet.com/api/bazaar"
     url = f"{base_url}/{item_id}/history?start={start_str}&end={end_str}"
-    raw = requests.get(url).json()
+
+    from Utils.data_utils import _get_session, _check_rate_limit, _get_next_proxy
+    import time
+
+    session = _get_session()
+    raw = None
+    max_retries = 3
+    for attempt in range(max_retries):
+        _check_rate_limit()
+        proxy_str = _get_next_proxy()
+        proxies = {"http": proxy_str, "https": proxy_str} if proxy_str else None
+        try:
+            resp = session.get(url, proxies=proxies, timeout=10)
+            resp.raise_for_status()
+            raw = resp.json()
+            break
+        except Exception as e:
+            print(f"      → predict_entries fetch failed for {item_id}: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2)
+            else:
+                return []
+
+    if not raw:
+        return []
+
     df = prepare_dataframe_from_raw(raw, mayor_data)
     if df.empty:
         return []
 
     last_row = df.iloc[-1:].copy()
 
-    future_times = pd.date_range(start=now, periods=int(horizon_hours*60/step_minutes), freq=f"{step_minutes}min")
+    future_times = pd.date_range(
+        start=now,
+        periods=int(horizon_hours * 60 / step_minutes),
+        freq=f"{step_minutes}min",
+    )
 
     preds = []
     scores = []
     for ts in future_times:
         row = last_row.copy()
-        row['timestamp'] = ts
+        row["timestamp"] = ts
 
         if mayor_data is not None:
             perks = match_mayor_perks(ts, mayor_data)
             for i, v in enumerate(perks):
-                row[f'mayor_{i}'] = v
+                row[f"mayor_{i}"] = v
 
         for c in feature_cols:
             if c not in row.columns:
@@ -628,11 +884,14 @@ def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horiz
         X = clean_infinite_values(row[feature_cols].values)
         X_scaled = scaler.transform(X)
         y_pred = model.predict(X_scaled)[0]
-        row['entry_score'] = y_pred
-        row['timestamp'] = ts.isoformat()
+        row["entry_score"] = y_pred
+        row["timestamp"] = ts.isoformat()
         scores.append(y_pred)
-        preds.append(row[['timestamp', 'buy_price', 'sell_price', 'entry_score']].to_dict(orient='records')[0])
-
+        preds.append(
+            row[["timestamp", "buy_price", "sell_price", "entry_score"]].to_dict(
+                orient="records"
+            )[0]
+        )
 
     return preds
 
@@ -640,6 +899,7 @@ def predict_entries(model, scaler, feature_cols, item_id, mayor_data=None, horiz
 # =========================================================
 # ANALYZE TOP PREDICTIONS
 # =========================================================
+
 
 def analyze_entries(pred_list):
     if not pred_list:
@@ -650,14 +910,16 @@ def analyze_entries(pred_list):
 
     for e in pred_list:
         try:
-            score = float(e.get('entry_score', 0.0))
+            score = float(e.get("entry_score", 0.0))
         except Exception:
             continue
 
-        if score <= 0:
+        # In classification, the score is a probability (0.0 to 1.0)
+        # We only want predictions where the model is at least 60% confident
+        if score < 0.60:
             continue
 
-        ts_str = e.get('timestamp')
+        ts_str = e.get("timestamp")
         if not ts_str:
             continue
 
@@ -671,11 +933,10 @@ def analyze_entries(pred_list):
             continue
 
         enriched_entry = dict(e)
-        enriched_entry['delta_minutes'] = float(delta_minutes)
+        enriched_entry["delta_minutes"] = float(delta_minutes)
         enriched.append(enriched_entry)
 
-
-    enriched.sort(key=lambda x: (x['delta_minutes'], -x['entry_score']))
+    enriched.sort(key=lambda x: (x["delta_minutes"], -x["entry_score"]))
 
     return enriched
 
@@ -685,10 +946,29 @@ def analyze_entries(pred_list):
 # =========================================================
 
 if __name__ == "__main__":
+    fetch_if_missing = True
+    update_with_new_data = True
+
+    proxies = load_proxies("proxies.txt")
+    configure_proxy_pool(proxies)
+
     csv_directory = os.path.join(project_root, "csv files")
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(script_dir, "bazaar_full_items_ids.json")
+    file_path = os.path.join(
+        script_dir,
+        "bazaar_full_items_ids.json",
+    )
     with open(file_path) as f:
         items = json.load(f)
+
+    print("Fetching mayor data...")
+    global_mayor_data = get_mayor_perks()
+
     for entry in items:
-        test_train_model_system(entry)
+        # We switch to test_train_model_system here so you can verify the new accuracy metrics
+        test_train_model_system(
+            entry,
+            fetch_if_missing,
+            update_with_new_data,
+            mayor_data=global_mayor_data,
+        )
