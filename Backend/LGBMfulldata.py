@@ -60,6 +60,25 @@ OBJECTIVE = os.environ.get("BAZAAR_OBJECTIVE", "regression").strip().lower()
 SPIKE_THRESHOLD = 0.015  # "tradeable move" cutoff, used by OBJECTIVE="binary"
 ENTRY_CONFIDENCE = 0.60  # min predicted probability to surface a signal (binary)
 
+
+# =========================================================
+# CPU budget
+# =========================================================
+#
+# Optuna's n_jobs runs that many trials concurrently, and each trial's LightGBM
+# independently defaults to *every* core. n_jobs=-1 therefore asks for
+# cores x cores threads -- 64 on an 8-core laptop -- and the resulting
+# oversubscription thrashes badly enough on a few hundred thousand rows to make
+# the machine unusable (observed load average 29 on 8 cores).
+#
+# Budget the two together instead. Defaults to half the cores so a training run
+# leaves the machine responsive; raise BAZAAR_CPU_BUDGET on a dedicated box.
+
+_CPU_COUNT = os.cpu_count() or 4
+CPU_BUDGET = max(1, int(os.environ.get("BAZAAR_CPU_BUDGET", max(1, _CPU_COUNT // 2))))
+OPTUNA_JOBS = max(1, min(CPU_BUDGET, 4))
+LGB_THREADS = max(1, CPU_BUDGET // OPTUNA_JOBS)
+
 if LABEL_MODE not in ("median", "tpsl"):
     raise ValueError(f"LABEL_MODE must be 'median' or 'tpsl', got {LABEL_MODE!r}")
 if OBJECTIVE not in ("regression", "binary"):
@@ -560,10 +579,17 @@ def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
 
 def load_entry_targets(item_id):
     csv_directory = os.path.join(project_root, "csv files")
-    df = pd.read_csv(
-        os.path.join(csv_directory, f"{item_id}_debug_data.csv"),
-        parse_dates=["timestamp"],
-    )
+    df = pd.read_csv(os.path.join(csv_directory, f"{item_id}_debug_data.csv"))
+
+    # parse_dates= silently gives up on this column and leaves it as strings:
+    # the CSV round-trip preserves the feed's mixed fractional-second precision,
+    # and pandas infers one format from the first row. Failing here is quiet --
+    # the trainer drops 'timestamp' from the features anyway, so it only
+    # surfaces later wherever a .dt accessor is used.
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"], format="ISO8601", utc=True, errors="coerce"
+        )
 
     # A cached CSV froze entry_label at whichever LABEL_MODE generated it, so
     # without this the flag would silently do nothing whenever a CSV already
@@ -621,6 +647,7 @@ def _entry_objective_regression(trial, X, y):
         "bagging_fraction": 0.8,
         "bagging_freq": 3,
         "verbosity": -1,
+        "num_threads": LGB_THREADS,
     }
 
     try:
@@ -666,6 +693,7 @@ def _entry_objective_binary(trial, X, y):
         "bagging_fraction": 0.8,
         "bagging_freq": 3,
         "verbosity": -1,
+        "num_threads": LGB_THREADS,
     }
 
     def pruning_callback(env):
@@ -825,7 +853,7 @@ def train_model_system(
     study.optimize(
         lambda t: entry_objective(t, X, y),
         n_trials=30,
-        n_jobs=-1,  # Parralelize trials across all available CPU cores
+        n_jobs=OPTUNA_JOBS,  # bounded jointly with LGB_THREADS, see CPU budget
     )
 
     params = study.best_params
@@ -848,6 +876,7 @@ def train_model_system(
                 "min_data_in_leaf": 50,  # Prevents GPU decision tree split crash
                 "max_bin": 63,  # Optimized for stable GPU training
                 "verbosity": -1,
+                "num_threads": LGB_THREADS,
             }
         )
     else:
@@ -863,6 +892,7 @@ def train_model_system(
                 "min_data_in_leaf": 50,
                 "max_bin": 63,
                 "verbosity": -1,
+                "num_threads": LGB_THREADS,
             }
         )
 
@@ -994,7 +1024,7 @@ def test_train_model_system(
     study.optimize(
         lambda t: entry_objective(t, X_train, y_train),
         n_trials=30,
-        n_jobs=-1,  # Parralelize trials across all available CPU cores
+        n_jobs=OPTUNA_JOBS,  # bounded jointly with LGB_THREADS, see CPU budget
     )
 
     params = study.best_params
@@ -1016,6 +1046,7 @@ def test_train_model_system(
                 "min_data_in_leaf": 50,  # Prevent GPU decision tree split crash
                 "max_bin": 63,  # Stable and fast on GPU
                 "verbosity": -1,
+                "num_threads": LGB_THREADS,
             }
         )
     else:
@@ -1033,6 +1064,7 @@ def test_train_model_system(
                 "min_data_in_leaf": 50,
                 "max_bin": 63,
                 "verbosity": -1,
+                "num_threads": LGB_THREADS,
             }
         )
 
