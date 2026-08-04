@@ -56,10 +56,13 @@ def get_device_type():
 
     # LightGBM logs "[Fatal] GPU Tree Learner was not enabled" from C++ straight
     # to fd 1, past verbosity and past Python's stdout, so mute the fd itself.
-    saved_fd = os.dup(1)
+    saved_out, saved_err = os.dup(1), os.dup(2)
     devnull = os.open(os.devnull, os.O_WRONLY)
     try:
+        sys.stdout.flush()
+        sys.stderr.flush()
         os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
         probe = np.random.default_rng(0).random((64, 4))
         lgb.train(
             {"objective": "binary", "device_type": "gpu", "verbosity": -1,
@@ -71,8 +74,10 @@ def get_device_type():
     except Exception:
         _DEVICE_TYPE = "cpu"
     finally:
-        os.dup2(saved_fd, 1)
-        os.close(saved_fd)
+        os.dup2(saved_out, 1)
+        os.dup2(saved_err, 2)
+        os.close(saved_out)
+        os.close(saved_err)
         os.close(devnull)
     print(f"  → LightGBM device_type: {_DEVICE_TYPE}")
     return _DEVICE_TYPE
