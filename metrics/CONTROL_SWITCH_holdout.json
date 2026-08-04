@@ -1,0 +1,246 @@
+{
+  "item": "CONTROL_SWITCH",
+  "generated_utc": "2026-08-04T23:47:28.777018+00:00",
+  "config": {
+    "label_mode": "median",
+    "objective": "binary",
+    "spike_threshold": 0.015,
+    "optuna_trials": 30,
+    "holdout_days": 60,
+    "entry_confidence": 0.6
+  },
+  "data": {
+    "total_rows": 540442,
+    "train_rows": 511511,
+    "test_rows": 28931,
+    "train_span": [
+      "2023-04-18 15:05:09.530000+00:00",
+      "2026-06-05 22:00:19.136000+00:00"
+    ],
+    "test_span": [
+      "2026-06-05 22:00:33.546000+00:00",
+      "2026-08-04 22:00:19.136000+00:00"
+    ],
+    "features": 119
+  },
+  "model_metrics": {
+    "threshold_0.50": {
+      "auc": 0.9091123784889358,
+      "control_auc": 0.4596248292817461,
+      "precision": 0.9480444042855298,
+      "recall": 0.7386975106864471,
+      "fire_rate_%": 53.55501019667484,
+      "positive_base_rate_%": 68.73250146901248
+    },
+    "threshold_0.60": {
+      "auc": 0.9091123784889358,
+      "control_auc": 0.4596248292817461,
+      "precision": 0.9543438559874772,
+      "recall": 0.7358310284133769,
+      "fire_rate_%": 52.99505720507413,
+      "positive_base_rate_%": 68.73250146901248
+    },
+    "threshold_0.70": {
+      "auc": 0.9091123784889358,
+      "control_auc": 0.4596248292817461,
+      "precision": 0.9581771552574472,
+      "recall": 0.732763389489565,
+      "fire_rate_%": 52.56299471155508,
+      "positive_base_rate_%": 68.73250146901248
+    },
+    "threshold_0.80": {
+      "auc": 0.9091123784889358,
+      "control_auc": 0.4596248292817461,
+      "precision": 0.9615205379135876,
+      "recall": 0.7263263766658286,
+      "fire_rate_%": 51.92008572119872,
+      "positive_base_rate_%": 68.73250146901248
+    }
+  },
+  "backtest": {
+    "conf0.60": {
+      "n_trades": 269,
+      "total_mean_per_trade_%": 24.52191987527294,
+      "total_median_per_trade_%": 18.22452507491378,
+      "total_summed_%": 6596.396446448421,
+      "total_compounded_%": 4.2891551851441e+23,
+      "total_compounding_ruined": false,
+      "total_win_rate_%": 98.51301115241635,
+      "total_max_drawdown_%": -10.411813555870793,
+      "directional_mean_per_trade_%": 4.4911956230318575,
+      "directional_median_per_trade_%": -0.9818656063142231,
+      "directional_summed_%": 1208.1316225955695,
+      "directional_compounded_%": 345.4050185215711,
+      "directional_compounding_ruined": false,
+      "directional_win_rate_%": 33.08550185873606,
+      "directional_max_drawdown_%": -88.73396178133156,
+      "spread_capture_mean_%": 20.03072425224108,
+      "avg_hold_minutes": 112.0270136307311,
+      "exit_reasons": {
+        "sl": 125,
+        "timeout": 81,
+        "tp": 63
+      },
+      "exposure_%": 34.87887781725103,
+      "trades_per_day": 4.483345795720084,
+      "random_entry_control": {
+        "n_trades": 469,
+        "total_mean_per_trade_%": 23.846315698877618,
+        "directional_mean_per_trade_%": 1.4359432621390478
+      },
+      "directional_edge_vs_random_pp": 3.0552523608928093,
+      "buy_and_hold_%": 7.588948031937244,
+      "stake_1M": {
+        "total_profit_coins": 65963964.46448421,
+        "model_attributable_coins": 8218628.850801657,
+        "spread_component_coins": 53882648.23852851,
+        "worst_trade_coins": -104118.13555870802
+      },
+      "stake_10M": {
+        "total_profit_coins": 659639644.644842,
+        "model_attributable_coins": 82186288.50801657,
+        "spread_component_coins": 538826482.3852851,
+        "worst_trade_coins": -1041181.3555870801
+      }
+    },
+    "conf0.70": {
+      "n_trades": 268,
+      "total_mean_per_trade_%": 24.65885039063302,
+      "total_median_per_trade_%": 19.021837411477634,
+      "total_summed_%": 6608.57190468965,
+      "total_compounded_%": 4.768838806404561e+23,
+      "total_compounding_ruined": false,
+      "total_win_rate_%": 98.50746268656717,
+      "total_max_drawdown_%": -10.411813555870793,
+      "directional_mean_per_trade_%": 4.729116032645964,
+      "directional_median_per_trade_%": -0.847514543368835,
+      "directional_summed_%": 1267.4030967491183,
+      "directional_compounded_%": 769.9605495043677,
+      "directional_compounding_ruined": false,
+      "directional_win_rate_%": 33.95522388059701,
+      "directional_max_drawdown_%": -85.28979672136579,
+      "spread_capture_mean_%": 19.929734357987066,
+      "avg_hold_minutes": 111.13662935323383,
+      "exit_reasons": {
+        "sl": 122,
+        "timeout": 81,
+        "tp": 65
+      },
+      "exposure_%": 34.473031781710645,
+      "trades_per_day": 4.466679082724842,
+      "random_entry_control": {
+        "n_trades": 469,
+        "total_mean_per_trade_%": 23.86628415369424,
+        "directional_mean_per_trade_%": 1.4780575038106623
+      },
+      "directional_edge_vs_random_pp": 3.2510585288353018,
+      "buy_and_hold_%": 7.588948031937244,
+      "stake_1M": {
+        "total_profit_coins": 66085719.0468965,
+        "model_attributable_coins": 8712836.857278608,
+        "spread_component_coins": 53411688.07940533,
+        "worst_trade_coins": -104118.13555870802
+      },
+      "stake_10M": {
+        "total_profit_coins": 660857190.468965,
+        "model_attributable_coins": 87128368.57278608,
+        "spread_component_coins": 534116880.7940533,
+        "worst_trade_coins": -1041181.3555870801
+      }
+    },
+    "conf0.80": {
+      "n_trades": 265,
+      "total_mean_per_trade_%": 24.781610681637815,
+      "total_median_per_trade_%": 18.22452507491378,
+      "total_summed_%": 6567.126830634021,
+      "total_compounded_%": 3.299653248774359e+23,
+      "total_compounding_ruined": false,
+      "total_win_rate_%": 98.49056603773585,
+      "total_max_drawdown_%": -10.411813555870806,
+      "directional_mean_per_trade_%": 4.856849181525515,
+      "directional_median_per_trade_%": -0.6603650901329517,
+      "directional_summed_%": 1287.0650331042614,
+      "directional_compounded_%": 958.4358924457446,
+      "directional_compounding_ruined": false,
+      "directional_win_rate_%": 33.9622641509434,
+      "directional_max_drawdown_%": -84.23009013663676,
+      "spread_capture_mean_%": 19.924761500112297,
+      "avg_hold_minutes": 109.77591194968552,
+      "exit_reasons": {
+        "sl": 119,
+        "timeout": 80,
+        "tp": 66
+      },
+      "exposure_%": 33.669788808189956,
+      "trades_per_day": 4.416678943739116,
+      "random_entry_control": {
+        "n_trades": 469,
+        "total_mean_per_trade_%": 23.878947202592947,
+        "directional_mean_per_trade_%": 1.4929826204890508
+      },
+      "directional_edge_vs_random_pp": 3.3638665610364638,
+      "buy_and_hold_%": 7.588948031937244,
+      "stake_1M": {
+        "total_profit_coins": 65671268.30634021,
+        "model_attributable_coins": 8914246.38674663,
+        "spread_component_coins": 52800617.97529759,
+        "worst_trade_coins": -104118.13555870802
+      },
+      "stake_10M": {
+        "total_profit_coins": 656712683.063402,
+        "model_attributable_coins": 89142463.8674663,
+        "spread_component_coins": 528006179.7529759,
+        "worst_trade_coins": -1041181.3555870801
+      }
+    },
+    "conf0.90": {
+      "n_trades": 260,
+      "total_mean_per_trade_%": 24.603944722757866,
+      "total_median_per_trade_%": 18.440935965808887,
+      "total_summed_%": 6397.025627917045,
+      "total_compounded_%": 8.661183717031689e+22,
+      "total_compounding_ruined": false,
+      "total_win_rate_%": 98.84615384615385,
+      "total_max_drawdown_%": -10.4118135558708,
+      "directional_mean_per_trade_%": 4.5311833670585475,
+      "directional_median_per_trade_%": -0.6420729121641559,
+      "directional_summed_%": 1178.1076754352223,
+      "directional_compounded_%": 291.8103110483528,
+      "directional_compounding_ruined": false,
+      "directional_win_rate_%": 35.0,
+      "directional_max_drawdown_%": -93.8736886731849,
+      "spread_capture_mean_%": 20.072761355699324,
+      "avg_hold_minutes": 109.4396153846154,
+      "exit_reasons": {
+        "sl": 116,
+        "timeout": 79,
+        "tp": 65
+      },
+      "exposure_%": 32.93330913753563,
+      "trades_per_day": 4.333345378762907,
+      "random_entry_control": {
+        "n_trades": 469,
+        "total_mean_per_trade_%": 23.878946000747906,
+        "directional_mean_per_trade_%": 1.4916478342207184
+      },
+      "directional_edge_vs_random_pp": 3.039535532837829,
+      "buy_and_hold_%": 7.588948031937244,
+      "stake_1M": {
+        "total_profit_coins": 63970256.279170446,
+        "model_attributable_coins": 7902792.385378355,
+        "spread_component_coins": 52189179.524818234,
+        "worst_trade_coins": -104118.13555870802
+      },
+      "stake_10M": {
+        "total_profit_coins": 639702562.7917045,
+        "model_attributable_coins": 79027923.85378355,
+        "spread_component_coins": 521891795.24818236,
+        "worst_trade_coins": -1041181.3555870801
+      }
+    }
+  },
+  "headline": {
+    "note": "Quote the fixed-stake figures. Compounded returns assume full capital re-invested across hundreds of trades, which order-book depth cannot support, and are reported only for completeness.",
+    "primary_metric": "directional_edge_vs_random_pp"
+  }
+}

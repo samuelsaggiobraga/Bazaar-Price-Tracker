@@ -188,6 +188,20 @@ def summarize(trades, df, signal=None, tax=TAX, rng_seed=0):
     # buy and hold on the same side of the book, taxed once
     first, last = df["buy_price"].iloc[0], df["buy_price"].iloc[-1]
     out["buy_and_hold_%"] = float((last * (1 - tax) - first) / first * 100) if first else None
+
+    # Fixed stake, no compounding. Compounding full capital across hundreds of
+    # trades implies order-book depth that does not exist -- it produces
+    # absurd numbers -- so this is the figure to quote. Coins are per one stake
+    # unit re-used each trade, which is how a flipper actually operates.
+    for stake in (1_000_000, 10_000_000):
+        out[f"stake_{stake//1_000_000}M"] = {
+            "total_profit_coins": float(trades["total"].sum() * stake),
+            "model_attributable_coins": float(
+                out.get("directional_edge_vs_random_pp", 0.0) / 100 * len(trades) * stake
+            ),
+            "spread_component_coins": float(trades["spread_capture"].sum() * stake),
+            "worst_trade_coins": float(trades["total"].min() * stake),
+        }
     return out
 
 
