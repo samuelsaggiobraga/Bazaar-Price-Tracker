@@ -1,12 +1,58 @@
 import requests
 import time
+import os
+import gzip
+import pickle
 from datetime import datetime, timedelta, timezone
 import threading
 import asyncio
 import aiohttp
 from itertools import cycle
 from dateutil import parser
-from Utils.db import get_item_history, get_latest_timestamp, insert_item_history
+
+# TimescaleDB is the primary store, but importing it eagerly made psycopg2 and
+# a running Postgres a hard requirement for the entire codebase -- you could
+# not import the trainer, the Flask API or any Testing Files script without
+# them, and the published gzip-pickle dataset became unloadable. Degrade to the
+# local bazaar_data/ cache instead.
+try:
+    from Utils.db import get_item_history, get_latest_timestamp, insert_item_history
+
+    DB_AVAILABLE = True
+    DB_IMPORT_ERROR = None
+except Exception as _db_err:  # psycopg2 missing, no DATABASE_URL, etc.
+    DB_AVAILABLE = False
+    DB_IMPORT_ERROR = _db_err
+
+    def get_item_history(*a, **kw):
+        raise RuntimeError(f"TimescaleDB unavailable: {DB_IMPORT_ERROR}")
+
+    def get_latest_timestamp(*a, **kw):
+        raise RuntimeError(f"TimescaleDB unavailable: {DB_IMPORT_ERROR}")
+
+    def insert_item_history(*a, **kw):
+        raise RuntimeError(f"TimescaleDB unavailable: {DB_IMPORT_ERROR}")
+
+
+def _pickle_cache_path(item_id):
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    json_dir = os.path.join(base_dir, "bazaar_data")
+    os.makedirs(json_dir, exist_ok=True)
+    return os.path.join(json_dir, f"bazaar_history_{item_id}.pkl.gz")
+
+
+def load_pickle_cache(item_id):
+    """Read the gzip-pickle cache, the format the public dataset ships in."""
+    path = _pickle_cache_path(item_id)
+    if not os.path.exists(path):
+        return None
+    with gzip.open(path, "rb") as f:
+        return pickle.load(f)
+
+
+def save_pickle_cache(item_id, data):
+    with gzip.open(_pickle_cache_path(item_id), "wb") as f:
+        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def parse_timestamp(ts_str):
@@ -361,6 +407,23 @@ def load_or_fetch_item_data(
     fetch_if_missing=True,
     update_with_new_data=False,
 ):
+    # No database configured: serve the gzip-pickle cache, which is also the
+    # format the public HuggingFace dataset ships in.
+    if not DB_AVAILABLE:
+        cached = load_pickle_cache(item_id)
+        if cached:
+            print(f"  ✓ Loaded {len(cached)} entries from local cache (no database)")
+            return cached
+        if not fetch_if_missing:
+            print("  ✗ No local cache and fetch_if_missing is False")
+            return None
+        print("  → No local cache, fetching full history from API...")
+        all_data = fetch_all_data_async(item_id, use_binary_search=True)
+        if all_data:
+            save_pickle_cache(item_id, all_data)
+            print(f"  ✓ Saved {len(all_data)} entries to local cache")
+        return all_data
+
     # Fetch from database
     print("  → Loading from database...")
     data = get_item_history(item_id, order_by="ASC")

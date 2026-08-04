@@ -25,3 +25,5 @@ build/
 # Secrets
 proxies.txt
 *.env
+# Test venv / scratch
+.venv/

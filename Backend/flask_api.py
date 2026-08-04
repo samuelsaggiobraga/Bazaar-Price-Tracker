@@ -195,7 +195,10 @@ def background_prediction_loop():
 def ensure_model_loaded():
     """Return 503 if models not loaded."""
     global model_trained
-    if not model_trained and request.endpoint not in ["health", "root"]:
+    # The view is health_check(), so its endpoint is "health_check" -- guarding
+    # on "health" meant the liveness probe itself answered 503 until models
+    # loaded, which is exactly when a probe needs to respond.
+    if not model_trained and request.endpoint not in ["health_check", "root"]:
         return jsonify(
             {"error": "Model not ready", "message": "Server initializing"}
         ), 503

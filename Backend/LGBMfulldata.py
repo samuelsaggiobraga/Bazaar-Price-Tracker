@@ -33,6 +33,51 @@ from numba import njit, prange  # noqa: E402
 
 warnings.filterwarnings("ignore")
 
+
+# =========================================================
+# Training device
+# =========================================================
+
+# LightGBM from pip is built without OpenCL, so "gpu" is fatal on a stock
+# install. Probe once and fall back, overridable with BAZAAR_DEVICE=gpu|cpu.
+_DEVICE_TYPE = None
+
+
+def get_device_type():
+    """Return a LightGBM device_type this machine can actually train on."""
+    global _DEVICE_TYPE
+    if _DEVICE_TYPE is not None:
+        return _DEVICE_TYPE
+
+    forced = os.environ.get("BAZAAR_DEVICE", "").strip().lower()
+    if forced in ("cpu", "gpu", "cuda"):
+        _DEVICE_TYPE = forced
+        return _DEVICE_TYPE
+
+    # LightGBM logs "[Fatal] GPU Tree Learner was not enabled" from C++ straight
+    # to fd 1, past verbosity and past Python's stdout, so mute the fd itself.
+    saved_fd = os.dup(1)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 1)
+        probe = np.random.default_rng(0).random((64, 4))
+        lgb.train(
+            {"objective": "binary", "device_type": "gpu", "verbosity": -1,
+             "min_data_in_leaf": 1, "max_bin": 63},
+            lgb.Dataset(probe, label=(probe[:, 0] > 0.5).astype(int)),
+            num_boost_round=1,
+        )
+        _DEVICE_TYPE = "gpu"
+    except Exception:
+        _DEVICE_TYPE = "cpu"
+    finally:
+        os.dup2(saved_fd, 1)
+        os.close(saved_fd)
+        os.close(devnull)
+    print(f"  → LightGBM device_type: {_DEVICE_TYPE}")
+    return _DEVICE_TYPE
+
+
 # =========================================================
 # Data Dump
 # =========================================================
@@ -180,7 +225,11 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
     return df
 
 
-@njit(nopython=True, fastmath=True, cache=True, parallel=True)
+# parallel=True is deliberately off: the body carries `ret` out of the inner
+# loop into the `not hit_target` fallback, which numba's parfor reduction pass
+# cannot analyse -- it recurses until RecursionError and the module fails to
+# import. Serial njit still gives ~2.7x over the pure-Python loop.
+@njit(fastmath=True, cache=True, parallel=False)
 def _compute_targets_jit(
     df_len,
     ts,
@@ -621,7 +670,7 @@ def train_model_system(
     params.update(
         {
             "objective": "binary",
-            "device_type": "gpu",
+            "device_type": get_device_type(),
             "metric": "binary_logloss",
             "scale_pos_weight": scale_pos_weight,
             "min_data_in_leaf": 50,  # Prevents GPU decision tree split crash
@@ -750,7 +799,7 @@ def test_train_model_system(
     params.update(
         {
             "objective": "binary",
-            "device_type": "gpu",
+            "device_type": get_device_type(),
             "metric": "binary_logloss",
             "scale_pos_weight": scale_pos_weight,
             "min_data_in_leaf": 50,  # Prevent GPU decision tree split crash
@@ -901,9 +950,28 @@ def predict_entries(
 # =========================================================
 
 
-def analyze_entries(pred_list):
+def analyze_entries(pred_list, top_n=None):
+    """Rank entry signals by how soon they fire, then by confidence.
+
+    ``top_n`` truncates the result. /investments passes the cached
+    ``{item_id, timestamp, entries}`` wrappers rather than bare entries, so
+    those are flattened here -- previously that endpoint raised TypeError on
+    the missing kwarg, and would still have returned [] once it was added
+    because ``entry_score`` lives on the nested entries, not the wrapper.
+    """
     if not pred_list:
         return []
+
+    flattened = []
+    for e in pred_list:
+        if isinstance(e, dict) and "entries" in e and "entry_score" not in e:
+            for inner in e.get("entries") or []:
+                merged = dict(inner)
+                merged.setdefault("item_id", e.get("item_id"))
+                flattened.append(merged)
+        else:
+            flattened.append(e)
+    pred_list = flattened
 
     now = datetime.now(timezone.utc)
     enriched = []
@@ -938,7 +1006,7 @@ def analyze_entries(pred_list):
 
     enriched.sort(key=lambda x: (x["delta_minutes"], -x["entry_score"]))
 
-    return enriched
+    return enriched[:top_n] if top_n else enriched
 
 
 # =========================================================

@@ -70,6 +70,15 @@ def get_mayor_perks():
 
         mayor_data.append({"start_date": start_date, "perks": binary_perks})
 
+    # The historical JSON block is ascending but the API block comes back
+    # newest-first, so the concatenation is unordered (107 inversions as of
+    # writing). match_mayor_perks walks the list assuming chronological order
+    # and silently returned the wrong mayor for 100% of sampled timestamps.
+    # prepare_dataframe_from_raw sorts before merge_asof, but predict_entries
+    # does not -- without this the model would train and serve on different
+    # perk vectors.
+    mayor_data.sort(key=lambda m: m["start_date"])
+
     return mayor_data
 
 
