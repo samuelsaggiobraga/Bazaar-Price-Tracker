@@ -35,6 +35,53 @@ warnings.filterwarnings("ignore")
 
 
 # =========================================================
+# Modelling configuration
+# =========================================================
+#
+# Two labelling/objective schemes exist in this codebase:
+#
+#   LABEL_MODE = "median"  entry_label is the median forward return over the
+#                          horizon, net of tax and spread-neutralised.
+#   LABEL_MODE = "tpsl"    entry_label is the first-touch take-profit /
+#                          stop-loss barrier outcome at +/-1.5% (PR #6).
+#
+#   OBJECTIVE = "regression"  predict the return itself, tuned with a
+#                             sign-penalty-weighted RMSE.
+#   OBJECTIVE = "binary"      predict P(entry_label >= SPIKE_THRESHOLD),
+#                             tuned with log-loss (PR #6).
+#
+# Defaults are median+regression because that combination measured better on
+# every item tested, on BOTH label definitions as ground truth -- including the
+# tpsl one. Numbers and method: docs/PR6_VERIFICATION.md.
+# Override per-run with BAZAAR_LABEL_MODE / BAZAAR_OBJECTIVE.
+
+LABEL_MODE = os.environ.get("BAZAAR_LABEL_MODE", "median").strip().lower()
+OBJECTIVE = os.environ.get("BAZAAR_OBJECTIVE", "regression").strip().lower()
+SPIKE_THRESHOLD = 0.015  # "tradeable move" cutoff, used by OBJECTIVE="binary"
+ENTRY_CONFIDENCE = 0.60  # min predicted probability to surface a signal (binary)
+
+if LABEL_MODE not in ("median", "tpsl"):
+    raise ValueError(f"LABEL_MODE must be 'median' or 'tpsl', got {LABEL_MODE!r}")
+if OBJECTIVE not in ("regression", "binary"):
+    raise ValueError(f"OBJECTIVE must be 'regression' or 'binary', got {OBJECTIVE!r}")
+
+
+# =========================================================
+# Data Cleaning (regression path)
+# =========================================================
+
+
+def clip_extreme_outliers(y, threshold=0.25):
+    y = np.asarray(y)
+    return np.clip(y, -threshold, threshold)
+
+
+def remove_extremes(X, y, cutoff=0.5):
+    mask = np.abs(y) <= cutoff
+    return X[mask], y[mask]
+
+
+# =========================================================
 # Training device
 # =========================================================
 
@@ -171,7 +218,18 @@ def prepare_dataframe_from_raw(data, mayor_data=None):
         if col not in df.columns:
             df[col] = 0.0
 
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    # The feed mixes fractional-second precision (".038", ".03", ".0" and none
+    # at all). A bare pd.to_datetime infers one format from the first element
+    # and silently coerces every row that doesn't match to NaT, which dropna
+    # then discards -- 99 rows per 100k here, each one punching a hole in the
+    # forward window of every row within the horizon behind it. ISO8601 parses
+    # the mixed precision instead of guessing.
+    df["timestamp"] = pd.to_datetime(
+        df["timestamp"], errors="coerce", format="ISO8601"
+    )
+    dropped = int(df["timestamp"].isna().sum())
+    if dropped:
+        print(f"  ⚠ {dropped} rows dropped: unparseable timestamps")
     df = df.dropna(subset=["timestamp"])
 
     cols_to_float = {
@@ -246,6 +304,7 @@ def _compute_targets_jit(
 ):
     n = df_len
     expected_return = np.zeros(n)
+    median_return = np.zeros(n)
     profit_prob = np.zeros(n)
     time_to_first_up = np.zeros(n)
     time_to_first_down = np.zeros(n)
@@ -325,6 +384,13 @@ def _compute_targets_jit(
         final_return = 0.0
         hit_target = False
 
+        # Both labels are computed in one pass so LABEL_MODE can switch between
+        # them without recomputing targets. The TP/SL scan no longer breaks on
+        # first touch -- it freezes final_return/mae behind `hit_target` instead
+        # -- so the window can be collected in full for the median.
+        window = np.empty(count)
+        k = 0
+
         for j in range(i, n):
             time_delta = ts[j] - start_ts
             if time_delta > horizon_sec:
@@ -335,21 +401,31 @@ def _compute_targets_jit(
                     entry_price + 1e-9
                 )
 
-                if ret < mae_running:
-                    mae_running = ret
+                if k < count:
+                    window[k] = ret
+                    k += 1
 
-                if ret >= tp_threshold:
-                    final_return = ret
-                    hit_target = True
-                    break
-                elif ret <= sl_threshold:
-                    final_return = ret
-                    hit_target = True
-                    break
+                if not hit_target:
+                    if ret < mae_running:
+                        mae_running = ret
+
+                    if ret >= tp_threshold:
+                        final_return = ret
+                        hit_target = True
+                    elif ret <= sl_threshold:
+                        final_return = ret
+                        hit_target = True
 
         if not hit_target and count > 0:
             # If we never hit TP or SL, our expected return is simply the last return we saw
             final_return = ret
+
+        if k > 0:
+            srt = np.sort(window[:k])
+            if k % 2 == 1:
+                median_return[i] = srt[k // 2]
+            else:
+                median_return[i] = 0.5 * (srt[k // 2 - 1] + srt[k // 2])
 
         mae_val = mae_running if mae_running != np.inf else 0.0
         expected_return[i] = final_return
@@ -380,6 +456,7 @@ def _compute_targets_jit(
 
     return (
         expected_return,
+        median_return,
         profit_prob,
         time_to_first_up,
         time_to_first_down,
@@ -410,6 +487,7 @@ def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
 
     (
         expected_return,
+        median_return,
         profit_prob,
         time_to_first_up,
         time_to_first_down,
@@ -462,7 +540,12 @@ def build_entry_targets(df, horizon_minutes=180, tax=0.0125):
     df["mfe"] = mfe_list
     df["profitable_1pct"] = profitable_1pct_list
     df["profitable_2pct"] = profitable_2pct_list
-    df["entry_label"] = expected_return
+    # Both label definitions are kept on the frame so a CSV generated under one
+    # LABEL_MODE stays usable under the other; entry_label is whichever mode is
+    # active. See docs/PR6_VERIFICATION.md for the A/B behind the default.
+    df["entry_label_tpsl"] = expected_return
+    df["entry_label_median"] = median_return
+    df["entry_label"] = median_return if LABEL_MODE == "median" else expected_return
     df["profit_prob"] = profit_prob
     df["time_to_first_up"] = time_to_first_up
     df["time_to_first_down"] = time_to_first_down
@@ -481,15 +564,81 @@ def load_entry_targets(item_id):
         os.path.join(csv_directory, f"{item_id}_debug_data.csv"),
         parse_dates=["timestamp"],
     )
+
+    # A cached CSV froze entry_label at whichever LABEL_MODE generated it, so
+    # without this the flag would silently do nothing whenever a CSV already
+    # exists. Both variants are stored, so re-point entry_label at the active
+    # one instead of forcing a regenerate.
+    wanted = f"entry_label_{LABEL_MODE}"
+    if wanted in df.columns:
+        df["entry_label"] = df[wanted]
+    elif "entry_label" in df.columns:
+        print(
+            f"  ⚠ {item_id}: cached CSV predates LABEL_MODE and has no "
+            f"'{wanted}' column; using its stored entry_label as-is. "
+            f"Delete 'csv files/{item_id}_debug_data.csv' to regenerate."
+        )
     return df
 
 
 # =========================================================
-# Optuna Objective (Entry Classification)
+# Optuna Objective
 # =========================================================
 
 
-def entry_objective(trial, X, y):
+def _entry_objective_regression(trial, X, y):
+    """Sign-penalty-weighted RMSE: a wrong-direction prediction costs 1-5x a
+    right-direction one of the same magnitude, because direction is what the
+    trade decision actually turns on.
+
+    The scaler is fit on the training split only -- fitting it on all of X
+    before splitting leaked validation distribution into tuning.
+    """
+    split_idx = int(len(X) * 0.8)
+    X_train_raw, X_val_raw = X[:split_idx], X[split_idx:]
+    y_train, y_val = y[:split_idx], y[split_idx:]
+
+    if len(X_train_raw) == 0 or len(X_val_raw) == 0:
+        return 9999.0
+
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train_raw)
+    X_val = scaler.transform(X_val_raw)
+
+    clip_thr = trial.suggest_float("label_clip", 0.01, 0.5, log=True)
+    y_train = np.clip(y_train, -clip_thr, clip_thr)
+    y_val = np.clip(y_val, -clip_thr, clip_thr)
+
+    sign_penalty = trial.suggest_float("sign_penalty", 1.0, 5.0)
+
+    params = {
+        "objective": "regression",
+        "device_type": "cpu",
+        "metric": "rmse",
+        "learning_rate": trial.suggest_float("lr", 0.01, 0.15, log=True),
+        "num_leaves": trial.suggest_int("num_leaves", 16, 64),
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 3,
+        "verbosity": -1,
+    }
+
+    try:
+        model = lgb.train(
+            params, lgb.Dataset(X_train, label=y_train), num_boost_round=300
+        )
+    except Exception as e:
+        print(f"  ⚠ Unexpected error during trial: {e}")
+        return 9999.0
+
+    preds = model.predict(X_val)
+    sq_errors = (preds - y_val) ** 2
+    weights = np.ones_like(sq_errors)
+    weights[np.sign(preds) != np.sign(y_val)] = sign_penalty
+    return float(np.sqrt(np.mean(weights * sq_errors)))
+
+
+def _entry_objective_binary(trial, X, y):
     split_idx = int(len(X) * 0.8)
 
     X_train_raw, X_val_raw = X[:split_idx], X[split_idx:]
@@ -553,6 +702,13 @@ def entry_objective(trial, X, y):
     return loss
 
 
+def entry_objective(trial, X, y):
+    """Dispatch to the objective selected by OBJECTIVE."""
+    if OBJECTIVE == "binary":
+        return _entry_objective_binary(trial, X, y)
+    return _entry_objective_regression(trial, X, y)
+
+
 # =========================================================
 # GENERATE CSV FILES
 # =========================================================
@@ -611,6 +767,10 @@ def train_model_system(
 
     future_cols = {
         "entry_label",
+        # both label variants live on the frame now -- leaving either in the
+        # feature set would hand the model the answer directly.
+        "entry_label_tpsl",
+        "entry_label_median",
         "max_profit",
         "max_loss",
         "risk_reward",
@@ -633,20 +793,26 @@ def train_model_system(
     X = clean_infinite_values(df[feature_cols].values)
     y_raw = df["entry_label"].values
 
-    # === CLASSIFICATION TARGET ===
-    # Convert problem to Yes/No: "Will this go up by at least 1.5%?"
-    y = (y_raw >= 0.015).astype(int)
-    # =============================
+    print(f"  → LABEL_MODE={LABEL_MODE}  OBJECTIVE={OBJECTIVE}")
 
-    split_idx = int(len(X) * 0.8)
-    y_train_split = y[:split_idx]
-    y_val_split = y[split_idx:]
+    if OBJECTIVE == "binary":
+        # Convert problem to Yes/No: "Will this go up by at least 1.5%?"
+        y = (y_raw >= SPIKE_THRESHOLD).astype(int)
 
-    if np.sum(y_train_split) < 20 or np.sum(y_val_split) < 5:
-        print(
-            f"  ⚠ Skipping {item_id}: Not enough positive examples in train/val sets (Train: {np.sum(y_train_split)}, Val: {np.sum(y_val_split)})."
-        )
-        return
+        split_idx = int(len(X) * 0.8)
+        y_train_split = y[:split_idx]
+        y_val_split = y[split_idx:]
+
+        if np.sum(y_train_split) < 20 or np.sum(y_val_split) < 5:
+            print(
+                f"  ⚠ Skipping {item_id}: Not enough positive examples in train/val sets (Train: {np.sum(y_train_split)}, Val: {np.sum(y_val_split)})."
+            )
+            return
+    else:
+        X, y = remove_extremes(X, y_raw, cutoff=0.5)
+        if len(y) == 0:
+            print(f"  ⚠ Skipping {item_id}: no rows left after extreme removal.")
+            return
 
     # Trial runs
     study = optuna.create_study(
@@ -667,22 +833,38 @@ def train_model_system(
         print(f"  ⚠ Skipping {item_id}: Optuna could not find any valid parameters.")
         return
 
-    # Handle class imbalance
-    neg_count = np.sum(y == 0)
-    pos_count = np.sum(y == 1)
-    scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1.0
+    if OBJECTIVE == "binary":
+        # Handle class imbalance
+        neg_count = np.sum(y == 0)
+        pos_count = np.sum(y == 1)
+        scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1.0
 
-    params.update(
-        {
-            "objective": "binary",
-            "device_type": get_device_type(),
-            "metric": "binary_logloss",
-            "scale_pos_weight": scale_pos_weight,
-            "min_data_in_leaf": 50,  # Prevents GPU decision tree split crash
-            "max_bin": 63,  # Optimized for stable GPU training
-            "verbosity": -1,
-        }
-    )
+        params.update(
+            {
+                "objective": "binary",
+                "device_type": get_device_type(),
+                "metric": "binary_logloss",
+                "scale_pos_weight": scale_pos_weight,
+                "min_data_in_leaf": 50,  # Prevents GPU decision tree split crash
+                "max_bin": 63,  # Optimized for stable GPU training
+                "verbosity": -1,
+            }
+        )
+    else:
+        # search-time only, not LightGBM parameters
+        best_clip = params.pop("label_clip", 0.25)
+        params.pop("sign_penalty", None)
+        y = clip_extreme_outliers(y, threshold=best_clip)
+        params.update(
+            {
+                "objective": "regression",
+                "device_type": get_device_type(),
+                "metric": "rmse",
+                "min_data_in_leaf": 50,
+                "max_bin": 63,
+                "verbosity": -1,
+            }
+        )
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
@@ -737,6 +919,10 @@ def test_train_model_system(
 
     future_cols = {
         "entry_label",
+        # both label variants live on the frame now -- leaving either in the
+        # feature set would hand the model the answer directly.
+        "entry_label_tpsl",
+        "entry_label_median",
         "max_profit",
         "max_loss",
         "risk_reward",
@@ -761,23 +947,42 @@ def test_train_model_system(
     X_val = clean_infinite_values(val_df[feature_cols].values)
     y_val_raw = val_df["entry_label"].values
 
-    # === CLASSIFICATION TARGET ===
-    y_train = (y_train_raw >= 0.015).astype(int)
-    y_val = (y_val_raw >= 0.015).astype(int)
-    # =============================
+    print(f"  → LABEL_MODE={LABEL_MODE}  OBJECTIVE={OBJECTIVE}")
 
-    if np.sum(y_train) < 20 or np.sum(y_val) < 5:
-        print(
-            f"  ⚠ Skipping {item_id}: Not enough positive examples in train/val sets (Train: {np.sum(y_train)}, Val: {np.sum(y_val)})."
-        )
-        return
+    if OBJECTIVE == "binary":
+        y_train = (y_train_raw >= SPIKE_THRESHOLD).astype(int)
+        y_val = (y_val_raw >= SPIKE_THRESHOLD).astype(int)
+
+        if np.sum(y_train) < 20 or np.sum(y_val) < 5:
+            print(
+                f"  ⚠ Skipping {item_id}: Not enough positive examples in train/val sets (Train: {np.sum(y_train)}, Val: {np.sum(y_val)})."
+            )
+            return
+    else:
+        # Drop unmodellable tails before scaling, so the rows fed to Optuna and
+        # the rows fed to the final fit stay aligned.
+        X_train, y_train = remove_extremes(X_train, y_train_raw, cutoff=0.5)
+        X_val, y_val = remove_extremes(X_val, y_val_raw, cutoff=0.5)
+        if len(y_train) == 0 or len(y_val) == 0:
+            print(f"  ⚠ Skipping {item_id}: no rows left after extreme removal.")
+            return
 
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_val_scaled = scaler.transform(X_val)
 
-    print(f"Train spikes: {np.sum(y_train)} / {len(y_train)}")
-    print(f"Val spikes: {np.sum(y_val)} / {len(y_val)}")
+    if OBJECTIVE == "binary":
+        print(f"Train spikes: {np.sum(y_train)} / {len(y_train)}")
+        print(f"Val spikes: {np.sum(y_val)} / {len(y_val)}")
+    else:
+        print(
+            f"y_train: {np.mean(y_train > 0) * 100:.1f}% positive, "
+            f"median={np.median(y_train):+.5f}, n={len(y_train):,}"
+        )
+        print(
+            f"y_val:   {np.mean(y_val > 0) * 100:.1f}% positive, "
+            f"median={np.median(y_val):+.5f}, n={len(y_val):,}"
+        )
 
     study = optuna.create_study(
         direction="minimize",
@@ -797,21 +1002,39 @@ def test_train_model_system(
         print(f"  ⚠ Skipping {item_id}: Optuna could not find any valid parameters.")
         return
 
-    neg_count = np.sum(y_train == 0)
-    pos_count = np.sum(y_train == 1)
-    scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1.0
+    if OBJECTIVE == "binary":
+        neg_count = np.sum(y_train == 0)
+        pos_count = np.sum(y_train == 1)
+        scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1.0
 
-    params.update(
-        {
-            "objective": "binary",
-            "device_type": get_device_type(),
-            "metric": "binary_logloss",
-            "scale_pos_weight": scale_pos_weight,
-            "min_data_in_leaf": 50,  # Prevent GPU decision tree split crash
-            "max_bin": 63,  # Stable and fast on GPU
-            "verbosity": -1,
-        }
-    )
+        params.update(
+            {
+                "objective": "binary",
+                "device_type": get_device_type(),
+                "metric": "binary_logloss",
+                "scale_pos_weight": scale_pos_weight,
+                "min_data_in_leaf": 50,  # Prevent GPU decision tree split crash
+                "max_bin": 63,  # Stable and fast on GPU
+                "verbosity": -1,
+            }
+        )
+    else:
+        # label_clip / sign_penalty are search-time only -- they shape the tuning
+        # signal, they are not LightGBM parameters.
+        best_clip = params.pop("label_clip", 0.25)
+        params.pop("sign_penalty", None)
+        y_train = clip_extreme_outliers(y_train, threshold=best_clip)
+        y_val = clip_extreme_outliers(y_val, threshold=best_clip)
+        params.update(
+            {
+                "objective": "regression",
+                "device_type": get_device_type(),
+                "metric": "rmse",
+                "min_data_in_leaf": 50,
+                "max_bin": 63,
+                "verbosity": -1,
+            }
+        )
 
     model = lgb.train(
         params,
@@ -828,15 +1051,23 @@ def test_train_model_system(
     print("\nTop 20 Features by Gain:")
     print(importance_df.head(20))
 
-    y_pred_prob = model.predict(X_val_scaled)
-    y_pred_binary = (y_pred_prob >= 0.5).astype(int)
+    y_score = model.predict(X_val_scaled)
+
+    # Ground truth for the "was this a tradeable move" question is the same in
+    # both modes, so ROC AUC is directly comparable across OBJECTIVE settings.
+    y_true_spike = (
+        y_val.astype(int)
+        if OBJECTIVE == "binary"
+        else (y_val >= SPIKE_THRESHOLD).astype(int)
+    )
+    fire = y_score >= 0.5 if OBJECTIVE == "binary" else y_score > 0
 
     try:
-        acc = accuracy_score(y_val, y_pred_binary)
-        prec = precision_score(y_val, y_pred_binary, zero_division=0)
-        rec = recall_score(y_val, y_pred_binary, zero_division=0)
-        f1 = f1_score(y_val, y_pred_binary, zero_division=0)
-        auc = roc_auc_score(y_val, y_pred_prob)
+        acc = accuracy_score(y_true_spike, fire.astype(int))
+        prec = precision_score(y_true_spike, fire.astype(int), zero_division=0)
+        rec = recall_score(y_true_spike, fire.astype(int), zero_division=0)
+        f1 = f1_score(y_true_spike, fire.astype(int), zero_division=0)
+        auc = roc_auc_score(y_true_spike, y_score)
     except Exception:
         acc, prec, rec, f1, auc = 0, 0, 0, 0, 0
 
@@ -846,13 +1077,34 @@ def test_train_model_system(
     print(f"F1 Score:  {f1:.4f}")
     print(f"ROC AUC:   {auc:.4f}")
 
+    tested_metrics_dict["label_mode"] = LABEL_MODE
+    tested_metrics_dict["objective"] = OBJECTIVE
     tested_metrics_dict["accuracy"] = acc
     tested_metrics_dict["precision"] = prec
     tested_metrics_dict["recall"] = rec
     tested_metrics_dict["f1"] = f1
     tested_metrics_dict["roc_auc"] = auc
     tested_metrics_dict["total_validation_samples"] = int(len(y_val))
-    tested_metrics_dict["actual_spikes_in_validation"] = int(np.sum(y_val))
+    tested_metrics_dict["actual_spikes_in_validation"] = int(np.sum(y_true_spike))
+
+    if OBJECTIVE == "regression":
+        rmse = float(np.sqrt(np.mean((y_score - y_val) ** 2)))
+        mae_err = float(np.mean(np.abs(y_score - y_val)))
+        sign_acc = float(np.mean(np.sign(y_score) == np.sign(y_val)))
+        mask = y_val > 0.01
+        safe_sign = (
+            float(np.mean((y_score[mask] > 0) == (y_val[mask] > 0)))
+            if mask.any()
+            else 0.0
+        )
+        print(f"RMSE:      {rmse:.6f}")
+        print(f"MAE:       {mae_err:.6f}")
+        print(f"Sign acc:  {sign_acc:.4f}")
+        print(f"Safe sign: {safe_sign:.4f} (restricted to true moves > 1%)")
+        tested_metrics_dict["rmse"] = rmse
+        tested_metrics_dict["mae"] = mae_err
+        tested_metrics_dict["sign_accuracy"] = sign_acc
+        tested_metrics_dict["safe_sign_accuracy"] = safe_sign
 
     with open(
         os.path.join(project_root, "Model_Files", f"{item_id}_test_train_metrics.json"),
@@ -987,9 +1239,14 @@ def analyze_entries(pred_list, top_n=None):
         except Exception:
             continue
 
-        # In classification, the score is a probability (0.0 to 1.0)
-        # We only want predictions where the model is at least 60% confident
-        if score < 0.60:
+        # Under OBJECTIVE="binary" the score is a probability, so require 60%
+        # confidence. Under "regression" it is a predicted return, where the
+        # entry rule is simply "expected to go up" -- applying the 0.60 cutoff
+        # there would reject every signal, since returns sit around 0.01-0.05.
+        if OBJECTIVE == "binary":
+            if score < ENTRY_CONFIDENCE:
+                continue
+        elif score <= 0:
             continue
 
         ts_str = e.get("timestamp")
