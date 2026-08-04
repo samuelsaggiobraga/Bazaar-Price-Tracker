@@ -34,6 +34,31 @@ except Exception as _db_err:  # psycopg2 missing, no DATABASE_URL, etc.
         raise RuntimeError(f"TimescaleDB unavailable: {DB_IMPORT_ERROR}")
 
 
+_SSL_CONTEXT = None
+
+
+def _ssl_context():
+    """Trust store for aiohttp.
+
+    requests bundles certifi, but aiohttp falls back to the OS store -- which on
+    a python.org macOS build is empty unless Install Certificates.command was
+    run. Every async fetch then dies with CERTIFICATE_VERIFY_FAILED while the
+    synchronous helpers keep working, which makes it look like a rate-limit or
+    proxy fault rather than a trust-store one.
+    """
+    global _SSL_CONTEXT
+    if _SSL_CONTEXT is None:
+        import ssl
+
+        try:
+            import certifi
+
+            _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            _SSL_CONTEXT = ssl.create_default_context()
+    return _SSL_CONTEXT
+
+
 def _pickle_cache_path(item_id):
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     json_dir = os.path.join(base_dir, "bazaar_data")
@@ -53,6 +78,59 @@ def load_pickle_cache(item_id):
 def save_pickle_cache(item_id, data):
     with gzip.open(_pickle_cache_path(item_id), "wb") as f:
         pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _extend_pickle_cache(item_id, cached):
+    """Top the cache up to now, mirroring the database path's incremental update.
+
+    Published dataset snapshots go stale, so training on one straight out of the
+    box silently evaluates on data that stops months ago.
+    """
+    latest = None
+    for entry in reversed(cached):
+        if isinstance(entry, dict) and "timestamp" in entry:
+            try:
+                latest = parse_timestamp(entry["timestamp"])
+                break
+            except Exception:
+                continue
+    if latest is None:
+        print("  ⚠ Could not read a timestamp from the cache; skipping update")
+        return cached
+
+    now = datetime.now(timezone.utc)
+    stale_days = (now - latest).total_seconds() / 86400
+    if stale_days < 1:
+        print(f"  ✓ Cache is current (newest {latest:%Y-%m-%d %H:%M} UTC)")
+        return cached
+
+    print(
+        f"  → Cache ends {latest:%Y-%m-%d} ({stale_days:.0f} days stale); "
+        f"fetching through {now:%Y-%m-%d}..."
+    )
+    new_data = fetch_all_data_async(
+        item_id, start=latest, end=now, use_binary_search=False
+    )
+    if not new_data:
+        print("  ✓ No new data returned")
+        return cached
+
+    # The API is inclusive at the boundary and chunks can overlap, so dedupe on
+    # timestamp rather than blindly extending.
+    seen = set()
+    merged = []
+    for row in list(cached) + list(new_data):
+        ts = row.get("timestamp") if isinstance(row, dict) else None
+        if ts in seen:
+            continue
+        seen.add(ts)
+        merged.append(row)
+    merged.sort(key=lambda r: str(r.get("timestamp")))
+
+    added = len(merged) - len(cached)
+    save_pickle_cache(item_id, merged)
+    print(f"  ✓ Added {added:,} new entries (total {len(merged):,})")
+    return merged
 
 
 def parse_timestamp(ts_str):
@@ -291,7 +369,10 @@ async def _fetch_all_async(item, chunks, proxies=None, max_concurrent=100):
     _async_rate_limit_lock = asyncio.Lock()
 
     connector = aiohttp.TCPConnector(
-        limit=max_concurrent * 2, limit_per_host=max_concurrent, ttl_dns_cache=300
+        limit=max_concurrent * 2,
+        limit_per_host=max_concurrent,
+        ttl_dns_cache=300,
+        ssl=_ssl_context(),
     )
 
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -413,6 +494,8 @@ def load_or_fetch_item_data(
         cached = load_pickle_cache(item_id)
         if cached:
             print(f"  ✓ Loaded {len(cached)} entries from local cache (no database)")
+            if update_with_new_data:
+                cached = _extend_pickle_cache(item_id, cached)
             return cached
         if not fetch_if_missing:
             print("  ✗ No local cache and fetch_if_missing is False")
