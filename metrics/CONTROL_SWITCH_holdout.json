@@ -345,5 +345,121 @@
         "worst_coins": 38731.57482622191
       }
     ]
+  },
+  "joint_ranking": {
+    "question": "Rank by known_spread + predicted_directional, using both signals together.",
+    "result": "Adds essentially nothing. Top-300 selection is IDENTICAL to spread-only (delta +0 coins/trade); top-600 +0.4%; top-1200 -2.1%.",
+    "why": "Magnitude mismatch, not a flawed combination. The regression model predicts within +/-1.6%, while the spread varies from 12.8% to over 100%. Adding a +/-1.6% term to a signal that ranges over 90 percentage points cannot reorder it.",
+    "strategies": [
+      {
+        "strategy": "spread only (top 300)",
+        "n_trades": 15,
+        "coins_per_trade": 689739.7430099995,
+        "total_coins": 10346096.145149993,
+        "spread_pt": 816838.0371500024,
+        "dir_pt": -127098.29414000301,
+        "dir_win_%": 13.333333333333334,
+        "worst_coins": 186844.23797626502
+      },
+      {
+        "strategy": "model only (top 300)",
+        "n_trades": 17,
+        "coins_per_trade": 171740.19004464688,
+        "total_coins": 2919583.230758997,
+        "spread_pt": 125508.6322364029,
+        "dir_pt": 46231.557808244004,
+        "dir_win_%": 41.17647058823529,
+        "worst_coins": 28680.3540055104
+      },
+      {
+        "strategy": "spread + model (top 300)",
+        "n_trades": 15,
+        "coins_per_trade": 689739.7430099995,
+        "total_coins": 10346096.145149993,
+        "spread_pt": 816838.0371500024,
+        "dir_pt": -127098.29414000301,
+        "dir_win_%": 13.333333333333334,
+        "worst_coins": 186844.23797626502
+      },
+      {
+        "strategy": "spread only (top 600)",
+        "n_trades": 25,
+        "coins_per_trade": 572644.0420768764,
+        "total_coins": 14316101.051921908,
+        "spread_pt": 719610.9361343358,
+        "dir_pt": -146966.89405745937,
+        "dir_win_%": 12.0,
+        "worst_coins": -491074.12446488754
+      },
+      {
+        "strategy": "model only (top 600)",
+        "n_trades": 31,
+        "coins_per_trade": 206135.76658278974,
+        "total_coins": 6390208.764066482,
+        "spread_pt": 194049.91482980232,
+        "dir_pt": 12085.851752987443,
+        "dir_win_%": 32.25806451612903,
+        "worst_coins": -4025.7917558549348
+      },
+      {
+        "strategy": "spread + model (top 600)",
+        "n_trades": 24,
+        "coins_per_trade": 574788.5954544218,
+        "total_coins": 13794926.290906124,
+        "spread_pt": 725400.6480669593,
+        "dir_pt": -150612.05261253752,
+        "dir_win_%": 12.5,
+        "worst_coins": -491074.12446488754
+      },
+      {
+        "strategy": "spread only (top 1200)",
+        "n_trades": 47,
+        "coins_per_trade": 577101.3136300704,
+        "total_coins": 27123761.74061331,
+        "spread_pt": 601556.2605137787,
+        "dir_pt": -24454.946883708362,
+        "dir_win_%": 17.02127659574468,
+        "worst_coins": -491074.12446488754
+      },
+      {
+        "strategy": "model only (top 1200)",
+        "n_trades": 48,
+        "coins_per_trade": 227811.0503707048,
+        "total_coins": 10934930.417793829,
+        "spread_pt": 216189.45069045646,
+        "dir_pt": 11621.599680248299,
+        "dir_win_%": 29.166666666666668,
+        "worst_coins": -4022.7009119932904
+      },
+      {
+        "strategy": "spread + model (top 1200)",
+        "n_trades": 49,
+        "coins_per_trade": 564991.9940511743,
+        "total_coins": 27684607.70850754,
+        "spread_pt": 591662.5082081415,
+        "dir_pt": -26670.514156967463,
+        "dir_win_%": 16.3265306122449,
+        "worst_coins": -491074.12446488754
+      }
+    ]
+  },
+  "spread_as_target": {
+    "question": "The shipped label predicts PRICE direction. Can the SPREAD itself be predicted?",
+    "note": "entry_label = (buy[j]-buy[i])*(1-tax)/sell[i] -- nothing in the pipeline targets spread evolution, even though spread drives ~80% of flip P&L.",
+    "probe": {
+      "persistence_corr_spread_now_vs_3h": 0.5284,
+      "widening_classifier_auc": 0.638,
+      "widening_shuffled_control": 0.5061,
+      "delta_regression_corr": 0.4123,
+      "predicted_delta_range": [
+        -2.4873,
+        2.1836
+      ],
+      "price_direction_model_range_for_scale": [
+        -0.016,
+        0.016
+      ]
+    },
+    "verdict": "Spread change is predictable with a clean control, and the predicted magnitudes are ~150x larger than the price-direction model's. This is a quick probe (one item, no Optuna, single split) -- promising, not proven."
   }
 }
