@@ -737,5 +737,489 @@
         "dir_%": -8.407374549981087
       }
     ]
+  },
+  "quantile_frontier_and_null_baseline": {
+    "question": "Do higher label quantiles (q75/q90/q95) beat naive spread on total coins?",
+    "answer": "No. All quantiles land within 1.5% of each other and all lose slightly to naive.",
+    "best_total_coins": {
+      "model_q50": 113287395,
+      "model_q75": 113656100,
+      "model_q90": 111967222,
+      "model_q95": 112078257,
+      "naive_spread": 115381853,
+      "ALWAYS_IN_no_signal": 129626725
+    },
+    "decisive_finding": "ALWAYS-IN -- flip constantly, zero intelligence -- makes 129.6M and beats every model variant AND naive by ~12%. Selection reduces trade count, every trade is profitable on average under these fill assumptions, so any filter costs more in throughput than it gains in quality. Veto-style filtering (keep throughput, drop only the worst predictions) also loses at every level tested, including vetoing just the bottom 5%.",
+    "what_it_means": "This backtest cannot evaluate the model, because it is entirely throughput-dominated and the fill assumption is doing all the work. 694 round-trips in 60 days each capturing a ~17% spread is not achievable -- if it were, no model would be needed. The binding constraint in real flipping is fill probability and order-book depth, and neither is represented here.",
+    "what_is_still_real": "The model's directional prediction is genuinely skilful: AUC 0.77-0.90 with clean shuffled controls, and directional return positive at every threshold where naive's is negative. It is just worth ~2-5% against an assumed ~17-20% spread capture, so it is swamped.",
+    "next_lever": "buyVolume / sellVolume / buyMovingWeek / sellMovingWeek are already in the data and are depth proxies. Modelling fill probability from them would make spread capture conditional rather than free, which is the only way this comparison becomes meaningful.",
+    "veto_sweep": [
+      {
+        "strategy": "ALWAYS-IN (no signal)",
+        "trades": 694,
+        "coins_per_trade": 186782.02411515926,
+        "TOTAL": 129626724.73592053,
+        "dir_%": 1.3520556770078285,
+        "worst": -25382.299271407297
+      },
+      {
+        "strategy": "VETO bottom 5% of model",
+        "trades": 687,
+        "coins_per_trade": 185534.4781768746,
+        "TOTAL": 127462186.50751285,
+        "dir_%": 1.3678861413865349,
+        "worst": -239658.60581691144
+      },
+      {
+        "strategy": "VETO bottom 10% of model",
+        "trades": 678,
+        "coins_per_trade": 189074.2504322801,
+        "TOTAL": 128192341.79308592,
+        "dir_%": 1.5288720159959075,
+        "worst": -149887.0908709429
+      },
+      {
+        "strategy": "VETO bottom 20% of model",
+        "trades": 659,
+        "coins_per_trade": 190801.26078031704,
+        "TOTAL": 125738030.85422893,
+        "dir_%": 1.7564152869709333,
+        "worst": -149886.5210122564
+      },
+      {
+        "strategy": "VETO bottom 30% of model",
+        "trades": 636,
+        "coins_per_trade": 187720.1708277343,
+        "TOTAL": 119390028.64643902,
+        "dir_%": 1.1937022386678797,
+        "worst": -104116.93145445005
+      },
+      {
+        "strategy": "VETO bottom 40% of model",
+        "trades": 598,
+        "coins_per_trade": 190060.36719825346,
+        "TOTAL": 113656099.58455557,
+        "dir_%": 1.5375382456135234,
+        "worst": -239664.5797166458
+      },
+      {
+        "strategy": "VETO bottom 50% of model",
+        "trades": 560,
+        "coins_per_trade": 196382.20949776343,
+        "TOTAL": 109974037.31874752,
+        "dir_%": 2.071325626660601,
+        "worst": -239664.5797166458
+      },
+      {
+        "strategy": "VETO bottom 10% spread",
+        "trades": 660,
+        "coins_per_trade": 195995.3574555578,
+        "TOTAL": 129356935.92066815,
+        "dir_%": 1.2951372439233666,
+        "worst": -107313.2474781904
+      },
+      {
+        "strategy": "VETO bottom 30% spread",
+        "trades": 560,
+        "coins_per_trade": 226990.2166197369,
+        "TOTAL": 127114521.30705266,
+        "dir_%": 1.4427031139247726,
+        "worst": -46991.288131487636
+      }
+    ],
+    "quantile_sweep": [
+      {
+        "strategy": "MODEL q50",
+        "pct": 40,
+        "trades": 604,
+        "coins_per_trade": 187561.91237236533,
+        "TOTAL_COINS": 113287395.07290865,
+        "dir_%": 1.4131196024795667,
+        "spread_%": 17.343071634756964,
+        "auc": 0.779113415909481
+      },
+      {
+        "strategy": "MODEL q50",
+        "pct": 50,
+        "trades": 560,
+        "coins_per_trade": 194860.90854553573,
+        "TOTAL_COINS": 109122108.7855,
+        "dir_%": 1.9405450405661735,
+        "spread_%": 17.5455458139874,
+        "auc": 0.779113415909481
+      },
+      {
+        "strategy": "MODEL q50",
+        "pct": 60,
+        "trades": 511,
+        "coins_per_trade": 200059.30767031317,
+        "TOTAL_COINS": 102230306.21953002,
+        "dir_%": 2.3550848718327977,
+        "spread_%": 17.65084589519852,
+        "auc": 0.779113415909481
+      },
+      {
+        "strategy": "MODEL q50",
+        "pct": 70,
+        "trades": 443,
+        "coins_per_trade": 210000.63603856272,
+        "TOTAL_COINS": 93030281.76508328,
+        "dir_%": 2.5982019850994567,
+        "spread_%": 18.401861618756815,
+        "auc": 0.779113415909481
+      },
+      {
+        "strategy": "MODEL q50",
+        "pct": 80,
+        "trades": 373,
+        "coins_per_trade": 199812.5770407193,
+        "TOTAL_COINS": 74530091.23618829,
+        "dir_%": 0.6113267613027332,
+        "spread_%": 19.369930942769198,
+        "auc": 0.779113415909481
+      },
+      {
+        "strategy": "MODEL q50",
+        "pct": 90,
+        "trades": 278,
+        "coins_per_trade": 227540.13293161325,
+        "TOTAL_COINS": 63256156.95498849,
+        "dir_%": 3.0336434786804674,
+        "spread_%": 19.720369814480858,
+        "auc": 0.779113415909481
+      },
+      {
+        "strategy": "MODEL q50",
+        "pct": 95,
+        "trades": 204,
+        "coins_per_trade": 223582.82669003203,
+        "TOTAL_COINS": 45610896.64476653,
+        "dir_%": 2.4544008849165047,
+        "spread_%": 19.9038817840867,
+        "auc": 0.779113415909481
+      },
+      {
+        "strategy": "MODEL q50",
+        "pct": 99,
+        "trades": 93,
+        "coins_per_trade": 209669.2897833838,
+        "TOTAL_COINS": 19499243.949854694,
+        "dir_%": 5.005057816417051,
+        "spread_%": 15.961871161921328,
+        "auc": 0.779113415909481
+      },
+      {
+        "strategy": "MODEL q75",
+        "pct": 40,
+        "trades": 598,
+        "coins_per_trade": 190060.36719825346,
+        "TOTAL_COINS": 113656099.58455557,
+        "dir_%": 1.5375382456135234,
+        "spread_%": 17.46849847421182,
+        "auc": 0.7706488415390604
+      },
+      {
+        "strategy": "MODEL q75",
+        "pct": 50,
+        "trades": 560,
+        "coins_per_trade": 196382.20949776343,
+        "TOTAL_COINS": 109974037.31874752,
+        "dir_%": 2.071325626660601,
+        "spread_%": 17.566895323115745,
+        "auc": 0.7706488415390604
+      },
+      {
+        "strategy": "MODEL q75",
+        "pct": 60,
+        "trades": 504,
+        "coins_per_trade": 208329.9235744881,
+        "TOTAL_COINS": 104998281.48154199,
+        "dir_%": 2.4097121498511385,
+        "spread_%": 18.42328020759767,
+        "auc": 0.7706488415390604
+      },
+      {
+        "strategy": "MODEL q75",
+        "pct": 70,
+        "trades": 437,
+        "coins_per_trade": 214581.10361064126,
+        "TOTAL_COINS": 93771942.27785023,
+        "dir_%": 2.7367774511150373,
+        "spread_%": 18.721332909949087,
+        "auc": 0.7706488415390604
+      },
+      {
+        "strategy": "MODEL q75",
+        "pct": 80,
+        "trades": 367,
+        "coins_per_trade": 201703.25488212248,
+        "TOTAL_COINS": 74025094.54173896,
+        "dir_%": -0.11676663398768687,
+        "spread_%": 20.287092122199933,
+        "auc": 0.7706488415390604
+      },
+      {
+        "strategy": "MODEL q75",
+        "pct": 90,
+        "trades": 280,
+        "coins_per_trade": 226055.16812346983,
+        "TOTAL_COINS": 63295447.07457156,
+        "dir_%": 2.4111453754721675,
+        "spread_%": 20.194371436874818,
+        "auc": 0.7706488415390604
+      },
+      {
+        "strategy": "MODEL q75",
+        "pct": 95,
+        "trades": 210,
+        "coins_per_trade": 232847.0130354781,
+        "TOTAL_COINS": 48897872.737450406,
+        "dir_%": 2.3765314149436496,
+        "spread_%": 20.90816988860416,
+        "auc": 0.7706488415390604
+      },
+      {
+        "strategy": "MODEL q75",
+        "pct": 99,
+        "trades": 97,
+        "coins_per_trade": 232369.9344913989,
+        "TOTAL_COINS": 22539883.645665694,
+        "dir_%": 6.03870813398768,
+        "spread_%": 17.198285315152216,
+        "auc": 0.7706488415390604
+      },
+      {
+        "strategy": "MODEL q90",
+        "pct": 40,
+        "trades": 590,
+        "coins_per_trade": 189774.95271683417,
+        "TOTAL_COINS": 111967222.10293217,
+        "dir_%": 1.4773997766688232,
+        "spread_%": 17.500095495014598,
+        "auc": 0.7672477320253005
+      },
+      {
+        "strategy": "MODEL q90",
+        "pct": 50,
+        "trades": 540,
+        "coins_per_trade": 199154.2851763388,
+        "TOTAL_COINS": 107543313.99522294,
+        "dir_%": 2.217169356203825,
+        "spread_%": 17.698259161430055,
+        "auc": 0.7672477320253005
+      },
+      {
+        "strategy": "MODEL q90",
+        "pct": 60,
+        "trades": 490,
+        "coins_per_trade": 206906.0791135899,
+        "TOTAL_COINS": 101383978.76565903,
+        "dir_%": 2.4999076942520855,
+        "spread_%": 18.1907002171069,
+        "auc": 0.7672477320253005
+      },
+      {
+        "strategy": "MODEL q90",
+        "pct": 70,
+        "trades": 426,
+        "coins_per_trade": 215483.27526914858,
+        "TOTAL_COINS": 91795875.2646573,
+        "dir_%": 2.5724946869290015,
+        "spread_%": 18.97583283998586,
+        "auc": 0.7672477320253005
+      },
+      {
+        "strategy": "MODEL q90",
+        "pct": 80,
+        "trades": 362,
+        "coins_per_trade": 198758.88661521015,
+        "TOTAL_COINS": 71950716.95470609,
+        "dir_%": 0.16524748506710413,
+        "spread_%": 19.710641176453915,
+        "auc": 0.7672477320253005
+      },
+      {
+        "strategy": "MODEL q90",
+        "pct": 90,
+        "trades": 279,
+        "coins_per_trade": 218087.87211333305,
+        "TOTAL_COINS": 60846516.319619924,
+        "dir_%": 1.5432198064798992,
+        "spread_%": 20.265567404853403,
+        "auc": 0.7672477320253005
+      },
+      {
+        "strategy": "MODEL q90",
+        "pct": 95,
+        "trades": 196,
+        "coins_per_trade": 231027.68294097172,
+        "TOTAL_COINS": 45281425.856430456,
+        "dir_%": 2.949150106416881,
+        "spread_%": 20.153618187680284,
+        "auc": 0.7672477320253005
+      },
+      {
+        "strategy": "MODEL q90",
+        "pct": 99,
+        "trades": 101,
+        "coins_per_trade": 229842.84238310612,
+        "TOTAL_COINS": 23214127.080693718,
+        "dir_%": 5.579858493246421,
+        "spread_%": 17.404425745064195,
+        "auc": 0.7672477320253005
+      },
+      {
+        "strategy": "MODEL q95",
+        "pct": 40,
+        "trades": 592,
+        "coins_per_trade": 189321.37955690248,
+        "TOTAL_COINS": 112078256.69768627,
+        "dir_%": 1.5240558619364464,
+        "spread_%": 17.408082093753798,
+        "auc": 0.7654569590556508
+      },
+      {
+        "strategy": "MODEL q95",
+        "pct": 50,
+        "trades": 552,
+        "coins_per_trade": 197869.64877636218,
+        "TOTAL_COINS": 109224046.12455192,
+        "dir_%": 1.9801458634342572,
+        "spread_%": 17.806819014201956,
+        "auc": 0.7654569590556508
+      },
+      {
+        "strategy": "MODEL q95",
+        "pct": 60,
+        "trades": 493,
+        "coins_per_trade": 206791.0280829699,
+        "TOTAL_COINS": 101947976.84490415,
+        "dir_%": 2.650752762563733,
+        "spread_%": 18.028350045733255,
+        "auc": 0.7654569590556508
+      },
+      {
+        "strategy": "MODEL q95",
+        "pct": 70,
+        "trades": 426,
+        "coins_per_trade": 200238.91391653608,
+        "TOTAL_COINS": 85301777.32844438,
+        "dir_%": 0.9314696231108677,
+        "spread_%": 19.092421768542742,
+        "auc": 0.7654569590556508
+      },
+      {
+        "strategy": "MODEL q95",
+        "pct": 80,
+        "trades": 352,
+        "coins_per_trade": 198133.5826213038,
+        "TOTAL_COINS": 69743021.08269893,
+        "dir_%": 0.18478621653573143,
+        "spread_%": 19.628572045594648,
+        "auc": 0.7654569590556508
+      },
+      {
+        "strategy": "MODEL q95",
+        "pct": 90,
+        "trades": 269,
+        "coins_per_trade": 225100.98536334504,
+        "TOTAL_COINS": 60552165.06273982,
+        "dir_%": 2.5746236584090934,
+        "spread_%": 19.93547487792541,
+        "auc": 0.7654569590556508
+      },
+      {
+        "strategy": "MODEL q95",
+        "pct": 95,
+        "trades": 198,
+        "coins_per_trade": 230349.63597289508,
+        "TOTAL_COINS": 45609227.92263322,
+        "dir_%": 3.207307908215501,
+        "spread_%": 19.827655689074007,
+        "auc": 0.7654569590556508
+      },
+      {
+        "strategy": "MODEL q95",
+        "pct": 99,
+        "trades": 93,
+        "coins_per_trade": 222292.91293405526,
+        "TOTAL_COINS": 20673240.90286714,
+        "dir_%": 3.9481789451829807,
+        "spread_%": 18.281112348222546,
+        "auc": 0.7654569590556508
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 40,
+        "trades": 489,
+        "coins_per_trade": 226040.46777829097,
+        "TOTAL_COINS": 110533788.74358429,
+        "dir_%": -0.7796256604504809,
+        "spread_%": 23.38367243827958
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 50,
+        "trades": 418,
+        "coins_per_trade": 276033.1407333723,
+        "TOTAL_COINS": 115381852.82654962,
+        "dir_%": 1.8598681578397973,
+        "spread_%": 25.743445915497432
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 60,
+        "trades": 347,
+        "coins_per_trade": 272822.6875361749,
+        "TOTAL_COINS": 94669472.5750527,
+        "dir_%": -1.3454120264810134,
+        "spread_%": 28.6276807800985
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 70,
+        "trades": 264,
+        "coins_per_trade": 316481.9032889008,
+        "TOTAL_COINS": 83551222.46826981,
+        "dir_%": -1.4132067243708217,
+        "spread_%": 33.061397053260904
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 80,
+        "trades": 185,
+        "coins_per_trade": 365389.9632881436,
+        "TOTAL_COINS": 67597143.20830657,
+        "dir_%": -2.5720934805881472,
+        "spread_%": 39.11108980940251
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 90,
+        "trades": 100,
+        "coins_per_trade": 440492.046453381,
+        "TOTAL_COINS": 44049204.6453381,
+        "dir_%": -4.67294924579209,
+        "spread_%": 48.72215389113019
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 95,
+        "trades": 56,
+        "coins_per_trade": 528917.857869577,
+        "TOTAL_COINS": 29619400.04069631,
+        "dir_%": -4.7011589557904205,
+        "spread_%": 57.59294474274813
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 99,
+        "trades": 16,
+        "coins_per_trade": 727118.6842672362,
+        "TOTAL_COINS": 11633898.948275778,
+        "dir_%": -8.407374549981087,
+        "spread_%": 81.11924297670471
+      }
+    ]
   }
 }
