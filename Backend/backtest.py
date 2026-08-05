@@ -61,6 +61,8 @@ def simulate_trades(
     min_hold_minutes=30,
     cooldown_minutes=60,
     tax=TAX,
+    min_price=1000.0,
+    max_spread_pct=1.0,
 ):
     """One position at a time; TP/SL evaluated on the DIRECTIONAL component.
 
@@ -74,6 +76,16 @@ def simulate_trades(
     n = len(df)
     max_hold, min_hold = max_hold_minutes * 60, min_hold_minutes * 60
     cooldown = cooldown_minutes * 60
+
+    # A momentarily empty buy-order side quotes sell_price at 0.0 / 0.1 / 1.2
+    # and an effectively infinite spread. Those are real market states but they
+    # are not tradeable -- you cannot fill a million coins into an empty book --
+    # and because returns divide by the entry cost, letting them through makes
+    # any spread-seeking strategy look like it earns trillions. Screen them out
+    # rather than let a data artifact masquerade as edge.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        spread_pct = np.where(sell > 0, (buy - sell) / np.where(sell > 0, sell, 1), np.inf)
+    tradeable = (sell >= min_price) & (buy >= min_price) & (spread_pct <= max_spread_pct)
 
     trades = []
     in_pos = False
@@ -115,7 +127,7 @@ def simulate_trades(
                 free_at = ts[i] + cooldown
             continue
 
-        if signal[i] and sell[i] > 0 and ts[i] >= free_at:
+        if signal[i] and ts[i] >= free_at and tradeable[i]:
             in_pos = True
             entry_i = i
 

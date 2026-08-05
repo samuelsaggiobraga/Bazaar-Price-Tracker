@@ -242,5 +242,108 @@
   "headline": {
     "note": "Quote the fixed-stake figures. Compounded returns assume full capital re-invested across hundreds of trades, which order-book depth cannot support, and are reported only for completeness.",
     "primary_metric": "directional_edge_vs_random_pp"
+  },
+  "baseline_comparison": {
+    "question": "Does the model beat a naive spread checker?",
+    "verdict": "No. On coins-per-trade the naive spread checker wins; the model's directional skill is real but the spread dominates total P&L.",
+    "caveat": "The naive strategy's advantage is almost entirely spread capture, which depends on the optimistic assumption that BOTH limit orders fill. Wide spreads mean a thin book -- exactly when fills are least likely. The model's edge is directional and less sensitive to that assumption.",
+    "strategies": [
+      {
+        "strategy": "MODEL (conf>=0.80)",
+        "n_trades": 261,
+        "total_coins": 61963543.07962966,
+        "spread_coins": 50910296.896612406,
+        "directional_coins": 11053246.183017258,
+        "total_per_trade_%": 23.740821103306384,
+        "spread_per_trade_%": 19.505860879928125,
+        "dir_per_trade_%": 4.23496022337826,
+        "dir_win_%": 33.33333333333333,
+        "worst_coins": -104118.13555870802
+      },
+      {
+        "strategy": "NAIVE spread >= p50 (12.6%)",
+        "n_trades": 317,
+        "total_coins": 81775744.73832765,
+        "spread_coins": 84774234.35169053,
+        "directional_coins": -2998489.613362881,
+        "total_per_trade_%": 25.796764901680646,
+        "spread_per_trade_%": 26.74266067876673,
+        "dir_per_trade_%": -0.9458957770860822,
+        "dir_win_%": 22.397476340694006,
+        "worst_coins": -491074.12446488754
+      },
+      {
+        "strategy": "NAIVE spread >= p70 (20.8%)",
+        "n_trades": 210,
+        "total_coins": 68664659.51598972,
+        "spread_coins": 71405691.91574323,
+        "directional_coins": -2741032.399753521,
+        "total_per_trade_%": 32.69745691237606,
+        "spread_per_trade_%": 34.002710436068206,
+        "dir_per_trade_%": -1.305253523692153,
+        "dir_win_%": 20.0,
+        "worst_coins": -491074.12446488754
+      },
+      {
+        "strategy": "NAIVE spread >= p80 (27.4%)",
+        "n_trades": 148,
+        "total_coins": 56107874.73122771,
+        "spread_coins": 60214197.33999045,
+        "directional_coins": -4106322.608762748,
+        "total_per_trade_%": 37.91072616974846,
+        "spread_per_trade_%": 40.68526847296652,
+        "dir_per_trade_%": -2.774542303218073,
+        "dir_win_%": 17.56756756756757,
+        "worst_coins": -491074.12446488754
+      },
+      {
+        "strategy": "NAIVE spread >= p90 (33.9%)",
+        "n_trades": 90,
+        "total_coins": 40458598.9703113,
+        "spread_coins": 44454473.576250285,
+        "directional_coins": -3995874.6059389818,
+        "total_per_trade_%": 44.953998855901446,
+        "spread_per_trade_%": 49.39385952916698,
+        "dir_per_trade_%": -4.439860673265535,
+        "dir_win_%": 12.222222222222221,
+        "worst_coins": -491074.12446488754
+      },
+      {
+        "strategy": "ALWAYS-IN (no selection)",
+        "n_trades": 471,
+        "total_coins": 101595422.09261028,
+        "spread_coins": 90060141.67591217,
+        "directional_coins": 11535280.416698089,
+        "total_per_trade_%": 21.57015331053297,
+        "spread_per_trade_%": 19.121049188091757,
+        "dir_per_trade_%": 2.449104122441208,
+        "dir_win_%": 28.02547770700637,
+        "worst_coins": -104118.13555870802
+      },
+      {
+        "strategy": "RANDOM (count-matched)",
+        "n_trades": 166,
+        "total_coins": 25447571.27980415,
+        "spread_coins": 27843088.39026054,
+        "directional_coins": -2395517.110456386,
+        "total_per_trade_%": 15.329862216749488,
+        "spread_per_trade_%": 16.772944813409964,
+        "dir_per_trade_%": -1.4430825966604734,
+        "dir_win_%": 24.69879518072289,
+        "worst_coins": -1000000.0
+      },
+      {
+        "strategy": "MODEL + spread>=p70",
+        "n_trades": 135,
+        "total_coins": 41040963.163618274,
+        "spread_coins": 42603177.56200213,
+        "directional_coins": -1562214.398383856,
+        "total_per_trade_%": 30.400713454532053,
+        "spread_per_trade_%": 31.557909305186765,
+        "dir_per_trade_%": -1.1571958506547082,
+        "dir_win_%": 26.666666666666668,
+        "worst_coins": 38731.57482622191
+      }
+    ]
   }
 }
