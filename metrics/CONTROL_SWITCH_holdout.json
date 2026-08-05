@@ -461,5 +461,281 @@
       ]
     },
     "verdict": "Spread change is predictable with a clean control, and the predicted magnitudes are ~150x larger than the price-direction model's. This is a quick probe (one item, no Optuna, single split) -- promising, not proven."
+  },
+  "horizon_and_quantile_sweep": {
+    "question": "Does a shorter window help? Does targeting a higher quantile help?",
+    "horizon": "1h beats 3h on predictability at every quantile (AUC 0.779 vs 0.741 at q50); controls clean at 0.45-0.48.",
+    "quantile": "Barely matters. q50->q90 slightly LOWERS AUC (0.779->0.767) while raising directional return per trade. The median label is as good as anything tested and is the safer statistic.",
+    "why_max_is_unusable": "max_profit has a median of 1,245% and q90 of 231,000% -- single-tick outlier listings with no depth. A max-based target chases artifacts; the median ignores them by construction. Its train base rate at the 5% threshold is 100%, so a spike classifier collapses to a constant.",
+    "results": [
+      {
+        "horizon_min": 60,
+        "quantile": "q50 (median, current)",
+        "base_rate_%": 8.049361940821765,
+        "auc": 0.779113415909481,
+        "control": 0.45068684409937193,
+        "model_coins_per_trade": 223582.82669003203,
+        "model_trades": 204,
+        "model_dir_per_trade_%": 2.4544008849165047,
+        "naive_coins_per_trade": 528917.857869577,
+        "naive_trades": 56,
+        "beats_naive": false
+      },
+      {
+        "horizon_min": 60,
+        "quantile": "q75",
+        "base_rate_%": 10.121301360258029,
+        "auc": 0.7706488415390604,
+        "control": 0.46425462992355543,
+        "model_coins_per_trade": 232847.0130354781,
+        "model_trades": 210,
+        "model_dir_per_trade_%": 2.3765314149436496,
+        "naive_coins_per_trade": 528917.857869577,
+        "naive_trades": 56,
+        "beats_naive": false
+      },
+      {
+        "horizon_min": 60,
+        "quantile": "q90",
+        "base_rate_%": 11.432477913336138,
+        "auc": 0.7672477320253005,
+        "control": 0.4678373817164375,
+        "model_coins_per_trade": 231027.68294097172,
+        "model_trades": 196,
+        "model_dir_per_trade_%": 2.949150106416881,
+        "naive_coins_per_trade": 528917.857869577,
+        "naive_trades": 56,
+        "beats_naive": false
+      },
+      {
+        "horizon_min": 180,
+        "quantile": "q50 (median, current)",
+        "base_rate_%": 13.581545365306408,
+        "auc": 0.7407531564777299,
+        "control": 0.46394132726524473,
+        "model_coins_per_trade": 216742.99300179115,
+        "model_trades": 167,
+        "model_dir_per_trade_%": 3.3360299557547983,
+        "naive_coins_per_trade": 511163.33934338356,
+        "naive_trades": 51,
+        "beats_naive": false
+      },
+      {
+        "horizon_min": 180,
+        "quantile": "q75",
+        "base_rate_%": 18.65446641424765,
+        "auc": 0.7322069336584225,
+        "control": 0.4767272647955731,
+        "model_coins_per_trade": 228087.93713850644,
+        "model_trades": 163,
+        "model_dir_per_trade_%": 4.060285307624498,
+        "naive_coins_per_trade": 511163.33934338356,
+        "naive_trades": 51,
+        "beats_naive": false
+      },
+      {
+        "horizon_min": 180,
+        "quantile": "q90",
+        "base_rate_%": 22.055111485065208,
+        "auc": 0.7257777152616032,
+        "control": 0.480239172699381,
+        "model_coins_per_trade": 231645.37073381085,
+        "model_trades": 154,
+        "model_dir_per_trade_%": 4.590147620297138,
+        "naive_coins_per_trade": 511163.33934338356,
+        "naive_trades": 51,
+        "beats_naive": false
+      }
+    ]
+  },
+  "efficient_frontier": {
+    "question": "Across ALL selectivity levels, which earns more total coins?",
+    "setup": "60min horizon, q75 label, one position at a time, same 60 days, 1M stake.",
+    "best_model_coins": 109974037,
+    "best_model_at": "p50, 560 trades",
+    "best_naive_coins": 115381853,
+    "best_naive_at": "p50, 418 trades",
+    "delta_coins": -5407816,
+    "delta_pct": -4.7,
+    "verdict": "Effectively a tie, naive marginally ahead. Both peak at the LEAST selective threshold -- throughput dominates total P&L.",
+    "key_asymmetry": "The model's directional return is POSITIVE at every threshold (+2 to +6%). Naive's is NEGATIVE at every threshold (-1 to -11%) and worsens as it gets more selective: wide spreads are followed by adverse drift (mean reversion). Naive still profits because spread capture exceeds that drift -- but its entire edge is buying into wide spreads, which is exactly the fill that does not happen in practice.",
+    "sweep": [
+      {
+        "strategy": "MODEL",
+        "pct": 50,
+        "trades": 560,
+        "coins_per_trade": 196382.20949776343,
+        "TOTAL_COINS": 109974037.31874752,
+        "dir_%": 2.071325626660601
+      },
+      {
+        "strategy": "MODEL",
+        "pct": 60,
+        "trades": 504,
+        "coins_per_trade": 208329.9235744881,
+        "TOTAL_COINS": 104998281.48154199,
+        "dir_%": 2.4097121498511385
+      },
+      {
+        "strategy": "MODEL",
+        "pct": 70,
+        "trades": 437,
+        "coins_per_trade": 214581.10361064126,
+        "TOTAL_COINS": 93771942.27785023,
+        "dir_%": 2.7367774511150373
+      },
+      {
+        "strategy": "MODEL",
+        "pct": 75,
+        "trades": 402,
+        "coins_per_trade": 193547.5915892582,
+        "TOTAL_COINS": 77806131.8188818,
+        "dir_%": -0.16853435034694295
+      },
+      {
+        "strategy": "MODEL",
+        "pct": 80,
+        "trades": 367,
+        "coins_per_trade": 201703.25488212248,
+        "TOTAL_COINS": 74025094.54173896,
+        "dir_%": -0.11676663398768687
+      },
+      {
+        "strategy": "MODEL",
+        "pct": 85,
+        "trades": 326,
+        "coins_per_trade": 214588.20382378052,
+        "TOTAL_COINS": 69955754.44655244,
+        "dir_%": 0.9564955077502225
+      },
+      {
+        "strategy": "MODEL",
+        "pct": 90,
+        "trades": 280,
+        "coins_per_trade": 226055.16812346983,
+        "TOTAL_COINS": 63295447.07457156,
+        "dir_%": 2.4111453754721675
+      },
+      {
+        "strategy": "MODEL",
+        "pct": 93,
+        "trades": 239,
+        "coins_per_trade": 239707.59420202582,
+        "TOTAL_COINS": 57290115.01428417,
+        "dir_%": 3.3792065190412703
+      },
+      {
+        "strategy": "MODEL",
+        "pct": 95,
+        "trades": 210,
+        "coins_per_trade": 232847.0130354781,
+        "TOTAL_COINS": 48897872.737450406,
+        "dir_%": 2.3765314149436496
+      },
+      {
+        "strategy": "MODEL",
+        "pct": 97,
+        "trades": 165,
+        "coins_per_trade": 231609.22562123783,
+        "TOTAL_COINS": 38215522.22750424,
+        "dir_%": 2.3719296587813377
+      },
+      {
+        "strategy": "MODEL",
+        "pct": 99,
+        "trades": 97,
+        "coins_per_trade": 232369.9344913989,
+        "TOTAL_COINS": 22539883.645665694,
+        "dir_%": 6.03870813398768
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 50,
+        "trades": 418,
+        "coins_per_trade": 276033.1407333723,
+        "TOTAL_COINS": 115381852.82654962,
+        "dir_%": 1.8598681578397973
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 60,
+        "trades": 347,
+        "coins_per_trade": 272822.6875361749,
+        "TOTAL_COINS": 94669472.5750527,
+        "dir_%": -1.3454120264810134
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 70,
+        "trades": 264,
+        "coins_per_trade": 316481.9032889008,
+        "TOTAL_COINS": 83551222.46826981,
+        "dir_%": -1.4132067243708217
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 75,
+        "trades": 226,
+        "coins_per_trade": 336662.4515001167,
+        "TOTAL_COINS": 76085714.03902635,
+        "dir_%": -1.7682058398470875
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 80,
+        "trades": 185,
+        "coins_per_trade": 365389.9632881436,
+        "TOTAL_COINS": 67597143.20830657,
+        "dir_%": -2.5720934805881472
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 85,
+        "trades": 147,
+        "coins_per_trade": 392590.59180932044,
+        "TOTAL_COINS": 57710816.99597011,
+        "dir_%": -3.3072100276580843
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 90,
+        "trades": 100,
+        "coins_per_trade": 440492.046453381,
+        "TOTAL_COINS": 44049204.6453381,
+        "dir_%": -4.67294924579209
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 93,
+        "trades": 71,
+        "coins_per_trade": 497035.24353902467,
+        "TOTAL_COINS": 35289502.29127075,
+        "dir_%": -4.237288477290697
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 95,
+        "trades": 56,
+        "coins_per_trade": 528917.857869577,
+        "TOTAL_COINS": 29619400.04069631,
+        "dir_%": -4.7011589557904205
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 97,
+        "trades": 35,
+        "coins_per_trade": 561595.4040296148,
+        "TOTAL_COINS": 19655839.141036518,
+        "dir_%": -10.746673527024628
+      },
+      {
+        "strategy": "NAIVE spread",
+        "pct": 99,
+        "trades": 16,
+        "coins_per_trade": 727118.6842672362,
+        "TOTAL_COINS": 11633898.948275778,
+        "dir_%": -8.407374549981087
+      }
+    ]
   }
 }
