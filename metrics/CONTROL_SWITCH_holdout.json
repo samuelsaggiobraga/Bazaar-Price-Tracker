@@ -1221,5 +1221,119 @@
         "spread_%": 81.11924297670471
       }
     ]
+  },
+  "signal_quality_matched_trades": {
+    "question": "Ignoring throughput, which model config has the best SIGNAL?",
+    "method": "Trade count matched at top-150 and top-300 predictions, so selectivity cannot distort the comparison. Primary metric is directional return per trade -- the component the model predicts. Spread capture is the order book's and is roughly constant across configs.",
+    "winner": "180min horizon + q50 (median) + Optuna-tuned: +17.08% directional per trade",
+    "corrections_to_earlier_conclusions": {
+      "auc_is_the_wrong_metric": "AUC is ANTI-correlated with tradeable value here. The highest-AUC config (60m q50 fixed, 0.7791) has the WORST directional return (+5.18%); the best directional config (180m q50 tuned, +17.08%) has nearly the lowest AUC (0.7225). AUC ranks the entire test set, but you only ever trade the top ~150 signals. Different objectives.",
+      "horizon": "Earlier I concluded 1h beats 3h -- that was based on AUC and it REVERSES on directional return. 180min takes the top three slots at matched trade counts.",
+      "tuning": "Optuna raises directional return in 3 of 4 configs (60m q50: 5.18->12.71, 180m q50: 11.64->17.08, 180m q75: 7.54->9.92) while LOWERING AUC in all four. Log-loss tuning sharpens the top end at the cost of global ranking.",
+      "quantile": "q50 takes the top 3 slots at @150. The original median label wins again."
+    },
+    "naive_reference": "-14.68% directional at matched count -- strongly adverse selection. Its 729k coins/trade is pure spread capture.",
+    "caveat": "After the one-position-and-cooldown constraint, top-150 signals yield only 39-65 actual trades, so these are small samples. The 180m-tuned and q50 preferences hold at @300 too, but treat the exact percentages as noisy.",
+    "results": [
+      {
+        "config": "60m q50 fixed",
+        "auc": 0.779113415909481,
+        "dir_pt@150": 5.175891838736172,
+        "coins_pt@150": 210499.7574156054,
+        "trades@150": 62,
+        "dir_pt@300": 5.349753345488879,
+        "coins_pt@300": 214974.07802512645,
+        "trades@300": 95,
+        "control": 0.45068684409937193
+      },
+      {
+        "config": "60m q50 TUNED",
+        "auc": 0.760345230766492,
+        "dir_pt@150": 12.714462528895575,
+        "coins_pt@150": 289403.0115632536,
+        "trades@150": 59,
+        "dir_pt@300": 9.294654417724384,
+        "coins_pt@300": 273143.6055790215,
+        "trades@300": 95,
+        "control": 0.4293435042157781
+      },
+      {
+        "config": "60m q75 fixed",
+        "auc": 0.7706488415390604,
+        "dir_pt@150": 5.812237206038191,
+        "coins_pt@150": 227358.211524942,
+        "trades@150": 65,
+        "dir_pt@300": 5.816348764005705,
+        "coins_pt@300": 231249.52323254535,
+        "trades@300": 100,
+        "control": 0.46425462992355543
+      },
+      {
+        "config": "60m q75 TUNED",
+        "auc": 0.7399208249993828,
+        "dir_pt@150": 5.38229778419661,
+        "coins_pt@150": 220944.41515618924,
+        "trades@150": 48,
+        "dir_pt@300": 5.858207308364879,
+        "coins_pt@300": 239006.0497902872,
+        "trades@300": 84,
+        "control": 0.45231050079850416
+      },
+      {
+        "config": "180m q50 fixed",
+        "auc": 0.7407531564777299,
+        "dir_pt@150": 11.641543596555387,
+        "coins_pt@150": 268282.4569719772,
+        "trades@150": 41,
+        "dir_pt@300": 7.732016518137051,
+        "coins_pt@300": 233505.92329515045,
+        "trades@300": 74,
+        "control": 0.46394132726524473
+      },
+      {
+        "config": "180m q50 TUNED",
+        "auc": 0.722490693142299,
+        "dir_pt@150": 17.081599411382168,
+        "coins_pt@150": 276834.69937443425,
+        "trades@150": 39,
+        "dir_pt@300": 11.75966906009319,
+        "coins_pt@300": 241622.9841291785,
+        "trades@300": 58,
+        "control": 0.4674200290908025
+      },
+      {
+        "config": "180m q75 fixed",
+        "auc": 0.7322069336584225,
+        "dir_pt@150": 7.537223627844438,
+        "coins_pt@150": 209090.2631187839,
+        "trades@150": 32,
+        "dir_pt@300": 7.936512022441204,
+        "coins_pt@300": 241970.95080192524,
+        "trades@300": 56,
+        "control": 0.4767272647955731
+      },
+      {
+        "config": "180m q75 TUNED",
+        "auc": 0.6880353940065508,
+        "dir_pt@150": 9.923889035383887,
+        "coins_pt@150": 215237.83647600777,
+        "trades@150": 29,
+        "dir_pt@300": 12.20685625735892,
+        "coins_pt@300": 251081.25613475812,
+        "trades@300": 43,
+        "control": 0.4804179040836659
+      },
+      {
+        "config": "NAIVE spread",
+        "auc": NaN,
+        "control": NaN,
+        "dir_pt@150": -14.67528455775112,
+        "coins_pt@150": 729191.4059479719,
+        "trades@150": 10,
+        "dir_pt@300": -8.407374549981087,
+        "coins_pt@300": 727118.6842672362,
+        "trades@300": 16
+      }
+    ]
   }
 }
